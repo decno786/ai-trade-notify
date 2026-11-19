@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Everyone can read signals; only the bot (server key) can write them.
+    match /signals/{id} { allow read: if true; allow write: if false; }
+    match /status/{id}  { allow read: if true; allow write: if false; }
+    match /alerts/{id}  { allow read: if true; allow write: if false; }
+
+    // Browsers may only drop off their alert token. Nobody can read tokens.
+    match /tokens/{token} {
+      allow create: if token.size() < 400
+        && request.resource.data.keys().hasOnly(['platform', 'created']);
+      allow read, update, delete: if false;
+    }
+  }
+}
