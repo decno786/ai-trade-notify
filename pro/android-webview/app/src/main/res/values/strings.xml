@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">AI Trade Signals</string>
+    <string name="server_title">Server address</string>
+    <string name="server_message">Enter the address of your api_server.py, e.g. http://192.168.1.10:5000 at home or https://your-domain.com on a cloud server.</string>
+    <string name="connect">Connect</string>
+    <string name="cannot_connect">Cannot reach %1$s\n\nIs api_server.py running and is your phone on the same Wi-Fi?\n\nTap here to change the address. Pull down to retry.</string>
+</resources>
