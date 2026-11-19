@@ -406,6 +406,7 @@ class _HomeShellState extends State<HomeShell> {
   final _subs = <StreamSubscription<dynamic>>[];
   List<Signal>? signals;
   Map<String, dynamic>? status;
+  Map<String, dynamic>? picksDoc;
   List<Map<String, dynamic>> alerts = [];
   String? error;
   String? picked;
@@ -431,6 +432,9 @@ class _HomeShellState extends State<HomeShell> {
     }, onError: (Object e) {}));
     _subs.add(_db.collection('alerts').orderBy('atMs', descending: true).limit(30).snapshots().listen((q) {
       setState(() => alerts = q.docs.map((d) => d.data()).toList());
+    }, onError: (Object e) {}));
+    _subs.add(_db.collection('picks').doc('latest').snapshots().listen((d) {
+      setState(() => picksDoc = d.data());
     }, onError: (Object e) {}));
     _subs.add(FirebaseMessaging.onMessage.listen((m) {
       final n = m.notification;
@@ -507,8 +511,9 @@ class _HomeShellState extends State<HomeShell> {
         onPick: (n) => setState(() => picked = n),
         alertsOn: settings.alertsOn,
         onToggleAlerts: () => _setAlerts(!settings.alertsOn),
-        onEditPlan: () => setState(() => tab = 3),
+        onEditPlan: () => setState(() => tab = 4),
       ),
+      PicksPage(doc: picksDoc),
       AlertsPage(alerts: alerts, alertsOn: settings.alertsOn, onToggleAlerts: (v) => _setAlerts(v)),
       CheckTradePage(signals: signals ?? const [], settings: settings),
       SettingsPage(settings: settings, onToggleAlerts: (v) => _setAlerts(v)),
@@ -544,6 +549,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.show_chart_rounded),
             selectedIcon: Icon(Icons.insights_rounded),
             label: 'Signals',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.trending_up),
+            selectedIcon: Icon(Icons.trending_up_rounded),
+            label: 'Picks',
           ),
           NavigationDestination(
             icon: Badge(
@@ -1916,4 +1926,161 @@ class _SettingsPageState extends State<SettingsPage> {
       ],
     );
   }
+}
+
+// ================================================================ 5-day picks page
+class PicksPage extends StatelessWidget {
+  const PicksPage({super.key, required this.doc});
+  final Map<String, dynamic>? doc;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = doc;
+    final model = (d?['model'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+    final picks = ((d?['picks'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    final hasEdge = model['has_edge'] == true;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(left: 4, bottom: 4),
+          child: Text('5-day picks', style: TextStyle(color: kText, fontSize: 26, fontWeight: FontWeight.w800)),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(left: 4, bottom: 16),
+          child: Text('Stocks (S&P 500) + crypto · machine learning · updated daily 09:00 Doha',
+              style: TextStyle(color: kMuted, height: 1.4)),
+        ),
+        if (d == null)
+          const SizedBox(
+            height: 320,
+            child: EmptyView(
+              icon: Icons.trending_up_rounded,
+              title: 'First daily scan is on the way',
+              text: 'The model scans the market every day at 09:00 Doha time.',
+            ),
+          )
+        else ...[
+          if (!hasEdge) const FadeSlideIn(child: _EdgeWarning()),
+          if (picks.isEmpty)
+            const FadeSlideIn(
+              index: 1,
+              child: GlassCard(
+                child: Text('No trade today. Nothing passed the accuracy filters. Waiting is a position too.',
+                    style: TextStyle(color: kText, height: 1.4)),
+              ),
+            ),
+          for (var i = 0; i < picks.length; i++) FadeSlideIn(index: i + 1, child: _PickCard(p: picks[i])),
+          const SizedBox(height: 6),
+          FadeSlideIn(index: picks.length + 1, child: _ModelCard(m: model, generated: '${d['generatedAt'] ?? ''}')),
+        ],
+      ],
+    );
+  }
+}
+
+class _EdgeWarning extends StatelessWidget {
+  const _EdgeWarning();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: kWait.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: kWait.withValues(alpha: 0.6)),
+        ),
+        child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.warning_amber_rounded, color: kWait),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "No edge today: the model did not beat simple guessing on its exam. Don't trade on these picks.",
+              style: TextStyle(color: kWait, fontWeight: FontWeight.w600, height: 1.4),
+            ),
+          ),
+        ]),
+      );
+}
+
+class _PickCard extends StatelessWidget {
+  const _PickCard({required this.p});
+  final Map<String, dynamic> p;
+
+  @override
+  Widget build(BuildContext context) {
+    final buy = p['signal'] == 'BUY';
+    final color = buy ? kUp : kDown;
+    final plan = (p['plan'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+    final hours = (p['hours'] as Map?)?.cast<String, dynamic>();
+    final ticker = '${p['ticker'] ?? ''}';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          colors: [color.withValues(alpha: 0.18), kSurface],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          CoinAvatar(ticker.replaceAll('-USD', ''), size: 40),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${buy ? 'BUY' : 'SELL'} $ticker',
+                  style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w800)),
+              Text('Past accuracy ${(_d(p['accuracy']) * 100).round()}% of ${_i(p['samples'])} signals',
+                  style: const TextStyle(color: kMuted, fontSize: 13)),
+            ]),
+          ),
+          ConfidenceRing(value: _d(p['probability']), color: color, size: 74),
+        ]),
+        const SizedBox(height: 12),
+        Row(children: [
+          _Stat('Entry', fp(_d(plan['entry'])), kText),
+          const SizedBox(width: 8),
+          _Stat('Stop', fp(_d(plan['stop'])), kDown),
+          const SizedBox(width: 8),
+          _Stat('Target', fp(_d(plan['target'])), kUp),
+        ]),
+        if (hours != null) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            const Icon(Icons.schedule_rounded, size: 16, color: kMuted),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text('Best buy ${hours['buy_hour']} · best sell ${hours['sell_hour']} (Doha time)',
+                  style: const TextStyle(color: kMuted, fontSize: 13)),
+            ),
+          ]),
+        ],
+      ]),
+    );
+  }
+}
+
+class _ModelCard extends StatelessWidget {
+  const _ModelCard({required this.m, required this.generated});
+  final Map<String, dynamic> m;
+  final String generated;
+
+  @override
+  Widget build(BuildContext context) => GlassCard(
+        child: Text(
+          'Model: ${m['name'] ?? '-'} · ${(_d(m['confident_accuracy']) * 100).round()}% right on its exam '
+          'vs ${(_d(m['baseline']) * 100).round()}% by guessing · $generated\n\n'
+          'Signals are probabilities, not guarantees. Use the stop-loss, risk max 1-2% per trade, '
+          'paper-trade first. Not financial advice.',
+          style: const TextStyle(color: kMuted, fontSize: 13, height: 1.4),
+        ),
+      );
 }
