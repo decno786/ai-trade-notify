@@ -1,0 +1,16 @@
+name: trade_helper
+description: Trade Helper - live crypto trading signals from Firebase.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+# The build robot (GitHub Actions) adds the newest compatible versions of
+# firebase_core, cloud_firestore, firebase_messaging and shared_preferences.
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
