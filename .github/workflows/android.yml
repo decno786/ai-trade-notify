@@ -1,0 +1,92 @@
+name: Build Android app
+
+on:
+  push:
+    paths: ['app/**', '.github/workflows/android.yml', '.github/scripts/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PACKAGE: decno.qa          # must match the Android app in Firebase
+  APP_LABEL: AI Trade Notify
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read Firebase settings from google-services.json
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo "::error::Upload google-services.json into the app folder first."; exit 1
+          fi
+          python3 .github/scripts/android_config.py app/google-services.json app/lib/firebase_config.dart "$PACKAGE"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Prepare Android project
+        working-directory: app
+        run: |
+          flutter --version
+          flutter create --org com.tradehelper --project-name trade_helper --platforms android .
+          rm -rf test analysis_options.yaml
+          flutter pub add firebase_core cloud_firestore firebase_messaging shared_preferences
+
+          G=$(ls android/app/build.gradle* | head -1)
+          if [[ "$G" == *.kts ]]; then
+            sed -i -E 's/minSdk *= *flutter\.minSdkVersion/minSdk = maxOf(flutter.minSdkVersion, 23)/' "$G"
+          else
+            sed -i -E 's/minSdk(Version)?( *=)? *flutter\.minSdkVersion/minSdkVersion Math.max(flutter.minSdkVersion, 23)/' "$G"
+          fi
+          sed -i -E "/applicationId/ s/com\.tradehelper\.trade_helper/${PACKAGE}/" "$G"
+          grep -nE "minSdk|applicationId" "$G"
+
+          M=android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.INTERNET' "$M" || sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' "$M"
+          sed -i "s/android:label=\"trade_helper\"/android:label=\"${APP_LABEL}\"/" "$M"
+
+          # app icon + dark launch screen
+          pip install --quiet pillow
+          python3 ../.github/scripts/make_icons.py android/app/src/main/res
+          for f in android/app/src/main/res/drawable*/launch_background.xml; do
+            sed -i 's#@android:color/white#@color/launch_bg#; s#?android:colorBackground#@color/launch_bg#' "$f"
+          done
+          mkdir -p android/app/src/main/res/values
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="launch_bg">#FF0A0F1E</color>\n</resources>\n' > android/app/src/main/res/values/colors.xml
+
+      - name: Check code
+        working-directory: app
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build app
+        working-directory: app
+        run: |
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk AI-Trade-Notify.apk
+
+      - name: Keep the APK as a build file
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Trade-Notify-apk
+          path: app/AI-Trade-Notify.apk
+
+      - name: Publish app for download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-app
+          name: AI Trade Notify - Android app
+          body: Open this page on your Android phone, tap AI-Trade-Notify.apk to download it, then open it to install.
+          files: app/AI-Trade-Notify.apk
+          make_latest: true
