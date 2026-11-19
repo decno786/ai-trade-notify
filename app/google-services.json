@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "433732442889",
+    "project_id": "ai-trade-notify",
+    "storage_bucket": "ai-trade-notify.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:433732442889:android:21564b79d67cda296651d8",
+        "android_client_info": {
+          "package_name": "decno.qa"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDU2Ka5mNSIk3kfOkDBb_qCugtl0OxiVEs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
