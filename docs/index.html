@@ -68,6 +68,9 @@ summary{cursor:pointer;color:var(--acc);font-weight:600;font-size:14px}
 .foot{font-size:12px;color:var(--mut);text-align:center;margin-top:18px}
 .toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);max-width:92%;background:var(--text);color:var(--bg);padding:12px 16px;border-radius:12px;font-size:14px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:9;cursor:pointer}
 .hide{display:none}
+.pick{padding:12px 0;border-top:1px solid var(--line)}.pick:first-child{border-top:0}
+.ph{display:flex;justify-content:space-between;align-items:center;gap:8px}.ph b{font-size:18px}.pick.BUY b{color:var(--up)}.pick.SELL b{color:var(--dn)}
+.pm{font-size:13px;color:var(--mut);margin-top:3px}.pwarn{font-size:13px;font-weight:600;color:var(--wait);background:var(--waitbg);border-radius:10px;padding:10px;margin-bottom:8px}
 .empty{color:var(--mut);font-size:14px}
 
 .brand{display:flex;align-items:center;gap:10px}
@@ -123,6 +126,11 @@ h1{background:linear-gradient(90deg,#fff,#c9d4ff);-webkit-background-clip:text;b
   <div class="card">
     <div class="lbl">All coins · tap one to see it</div>
     <div class="chips" id="chips"></div>
+  </div>
+
+  <div class="card" id="picksCard">
+    <div class="lbl">📈 5-day picks · stocks + crypto · updated daily 09:00 Doha</div>
+    <div id="picks" class="empty">Waiting for the first daily scan…</div>
   </div>
 
   <div class="card">
@@ -226,6 +234,20 @@ function toast(text){ const t = document.createElement('div'); t.className = 'to
 function setLive(state, text){ $('dot').className = 'dot '+state; $('liveTxt').textContent = text }
 function banner(text){ $('banner').textContent = text; $('banner').classList.toggle('hide', !text) }
 
+function renderPicks(p){
+  const el = $('picks');
+  if (!p){ el.className = 'empty'; el.textContent = 'Waiting for the first daily scan…'; return }
+  const m = p.model || {}, list = p.picks || [];
+  let h = '';
+  if (!m.has_edge) h += '<div class="pwarn">⚠️ No edge today: the model did not beat simple guessing on its exam. Don\'t trade on these.</div>';
+  if (!list.length) h += '<div class="pm">No trade today. Nothing passed the accuracy filters.</div>';
+  list.forEach(x => { const pl = x.plan || {}, hr = x.hours, buy = x.signal === 'BUY';
+    h += `<div class="pick ${x.signal}"><div class="ph"><b>${buy?'BUY':'SELL'} ${x.ticker}</b><span class="pm">${Math.round(x.probability*100)}% chance ${buy?'up':'down'} in 5 days</span></div>
+      <div class="pm">Past accuracy ${Math.round(x.accuracy*100)}% of ${x.samples} · Entry ${fp(pl.entry)} · <span class="r">Stop ${fp(pl.stop)}</span> · <span class="g">Target ${fp(pl.target)}</span>${hr?` · Best buy ${hr.buy_hour} / sell ${hr.sell_hour} Doha`:''}</div></div>`; });
+  h += `<div class="pm" style="margin-top:10px">Model: ${m.name||'-'} · ${Math.round((m.confident_accuracy||0)*100)}% right on its exam vs ${Math.round((m.baseline||0)*100)}% by guessing · ${p.generatedAt||''}</div>`;
+  el.className = ''; el.innerHTML = h;
+}
+
 /* ---------- live data from Firebase ---------- */
 async function connect(){
   const cfg = self.FIREBASE_CONFIG || {};
@@ -248,6 +270,7 @@ async function connect(){
       tick();
     });
     F.onSnapshot(F.query(F.collection(db, 'alerts'), F.orderBy('atMs', 'desc'), F.limit(8)), snap => renderAlerts(snap.docs.map(d => d.data())));
+    F.onSnapshot(F.doc(db, 'picks', 'latest'), d => renderPicks(d.data()), () => {});
     setupAlerts();
   } catch (e) { startDemo('Could not connect to Firebase ('+e.message+'). Showing DEMO signals.') }
 }
