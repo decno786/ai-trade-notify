@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Trade Notify</title>
+<meta name="theme-color" content="#0A0F1E">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0A0F1E;--card:#131A2F;--card2:#1B2442;--line:#263052;--text:#EAF0FF;--mut:#8C98BC;--up:#22C55E;--upbg:rgba(34,197,94,.15);--dn:#F0445A;--dnbg:rgba(240,68,90,.15);--wait:#F5A524;--waitbg:rgba(245,165,36,.14);--acc:#5B7CFF;--acc2:#A35CFF}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(180deg,#111833 0,#0A0F1E 45%) fixed;min-height:100vh;color:var(--text);font:16px/1.5 Inter,system-ui,sans-serif}
+.wrap{max-width:560px;margin:0 auto;padding:16px 14px 50px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+h1{font-size:22px;margin:0;font-weight:800}
+.live{font-size:12px;font-weight:600;color:var(--mut);display:flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut)}
+.dot.on{background:var(--up);box-shadow:0 0 0 3px var(--upbg)}
+.dot.off{background:var(--wait)}
+.banner{font-size:13px;padding:10px 12px;border-radius:12px;background:var(--waitbg);color:var(--wait);margin-bottom:12px;font-weight:500}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
+.lbl{font-size:13px;color:var(--mut);margin-bottom:6px;font-weight:500}
+.money{display:flex;align-items:center;gap:8px;font-size:22px;font-weight:700}
+.money input{flex:1;font:inherit;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--bg);color:var(--text);min-width:0}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:14px}
+.seg button{font:inherit;font-size:15px;font-weight:600;padding:10px 4px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);cursor:pointer}
+.seg button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.seg small{display:block;font-size:11px;font-weight:500;opacity:.8}
+.bell{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;font:inherit;font-weight:700;font-size:16px;padding:13px;border-radius:12px;border:0;background:var(--acc);color:#fff;cursor:pointer}
+.bell:disabled{opacity:.45;cursor:default}
+.bell.done{background:var(--upbg);color:var(--up);cursor:default}
+.hint{font-size:13px;color:var(--mut);margin-top:8px}
+.hero{border-width:2px}
+.hero.UP{border-color:var(--up)}.hero.DOWN{border-color:var(--dn)}.hero.WAIT{border-color:var(--wait)}
+.action{font-size:30px;font-weight:800;line-height:1.15}
+.UP .action{color:var(--up)}.DOWN .action{color:var(--dn)}.WAIT .action{color:var(--wait)}
+.meta{display:flex;justify-content:space-between;align-items:center;margin:6px 0 16px;color:var(--mut);font-size:14px}
+.stars{color:#e0a100;font-size:18px;letter-spacing:1px}
+.step{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.num{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;background:var(--bg);border:1px solid var(--line)}
+.step b{font-size:17px}
+.step .s{color:var(--mut);font-size:14px}
+.g{color:var(--up)}.r{color:var(--dn)}
+.timer{margin-top:6px;padding:12px;border-radius:12px;background:var(--bg);display:flex;justify-content:space-between;align-items:center;font-size:14px}
+.timer b{font-size:22px;font-variant-numeric:tabular-nums}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--acc);font-weight:600;font-size:14px}
+.why{list-style:none;padding:0;margin:8px 0 0;font-size:14px}
+.why li{padding:4px 0}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:inherit;font-size:14px;font-weight:600;padding:8px 12px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer}
+.chip.on{outline:2px solid var(--acc)}
+.chip .UP{color:var(--up)}.chip .DOWN{color:var(--dn)}.chip .WAIT{color:var(--wait)}
+.alert{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);font-size:14px}
+.alert:first-child{border-top:0}
+.alert .t{color:var(--mut);white-space:nowrap}
+.big{display:block;width:100%;font:inherit;font-weight:700;font-size:17px;padding:14px;border-radius:12px;border:0;background:var(--acc);color:#fff;cursor:pointer;margin-top:10px}
+.f{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.f label{font-size:13px;color:var(--mut)}
+.f input,.f select{width:100%;font:inherit;border:1px solid var(--line);border-radius:10px;padding:9px 10px;background:var(--bg);color:var(--text)}
+.full{grid-column:1/-1}
+.ans{margin-top:12px;padding:14px;border-radius:12px;background:var(--bg);font-size:15px}
+.err{color:var(--dn);font-size:14px;margin-top:8px}
+.foot{font-size:12px;color:var(--mut);text-align:center;margin-top:18px}
+.toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);max-width:92%;background:var(--text);color:var(--bg);padding:12px 16px;border-radius:12px;font-size:14px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:9;cursor:pointer}
+.hide{display:none}
+.empty{color:var(--mut);font-size:14px}
+
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;box-shadow:0 8px 20px rgba(91,124,255,.45);animation:logoIn .8s cubic-bezier(.3,1.4,.5,1) both}
+.logo svg{width:24px;height:24px}
+h1{background:linear-gradient(90deg,#fff,#c9d4ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.card{background:linear-gradient(135deg,var(--card2),var(--card));animation:fadeUp .6s cubic-bezier(.2,.8,.2,1) both}
+.wrap>.card:nth-of-type(1){animation-delay:.05s}.wrap>.card:nth-of-type(2){animation-delay:.12s}.wrap>.card:nth-of-type(3){animation-delay:.19s}
+.wrap>.card:nth-of-type(4){animation-delay:.26s}.wrap>.card:nth-of-type(5){animation-delay:.33s}.wrap>.card:nth-of-type(6){animation-delay:.4s}.wrap>.card:nth-of-type(7){animation-delay:.47s}
+.hero{box-shadow:0 14px 40px rgba(0,0,0,.35)}
+.hero.UP{background:linear-gradient(135deg,rgba(34,197,94,.20),var(--card) 55%);box-shadow:0 14px 40px rgba(34,197,94,.15)}
+.hero.DOWN{background:linear-gradient(135deg,rgba(240,68,90,.20),var(--card) 55%);box-shadow:0 14px 40px rgba(240,68,90,.15)}
+.hero.WAIT{background:linear-gradient(135deg,rgba(245,165,36,.18),var(--card) 55%)}
+.hero.pop{animation:pop .5s cubic-bezier(.2,.8,.2,1)}
+.step{animation:fadeUp .5s cubic-bezier(.2,.8,.2,1) both}.step:nth-of-type(2){animation-delay:.08s}.step:nth-of-type(3){animation-delay:.16s}
+.dot.on{animation:pulse 1.7s infinite}
+.chip{transition:transform .2s,box-shadow .25s,border-color .25s}.chip:hover{transform:translateY(-2px)}.chip:active{transform:scale(.96)}
+.chip.on{outline:0;border-color:var(--acc);box-shadow:0 6px 18px rgba(91,124,255,.35)}
+.seg button{transition:all .25s}.seg button.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;box-shadow:0 6px 18px rgba(91,124,255,.35)}
+.bell,.big{background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 8px 20px rgba(91,124,255,.35);transition:transform .15s}.bell:active,.big:active{transform:scale(.98)}
+.bell.done{background:var(--upbg);box-shadow:none}
+.timer{background:rgba(10,15,30,.55)}
+.alert{animation:fadeUp .45s both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes pop{from{opacity:.2;transform:scale(.97)}to{opacity:1;transform:none}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}100%{box-shadow:0 0 0 9px rgba(34,197,94,0)}}
+@keyframes logoIn{from{opacity:0;transform:scale(.5) rotate(-25deg)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></div><h1>AI Trade Notify</h1></div><span class="live"><span class="dot" id="dot"></span><span id="liveTxt">Connecting…</span></span></div>
+  <div class="banner hide" id="banner"></div>
+
+  <div class="card">
+    <div class="lbl">My trading money</div>
+    <div class="money">$<input id="bal" type="number" inputmode="decimal" value="1000" min="0"></div>
+    <div class="seg" id="style">
+      <button data-s="safe">Safe<small>risk 0.5%</small></button>
+      <button data-s="normal">Normal<small>risk 1%</small></button>
+      <button data-s="bold">Bold<small>risk 2%</small></button>
+    </div>
+  </div>
+
+  <div class="card" id="alertCard">
+    <button class="bell" id="bell">🔔 Turn on alerts</button>
+    <div class="hint" id="bellHint">Get a notification when a strong BUY or SELL signal appears.</div>
+  </div>
+
+  <div class="card hero" id="hero"><div class="empty">Waiting for the first signals…</div></div>
+
+  <div class="card">
+    <div class="lbl">All coins · tap one to see it</div>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <div class="card">
+    <div class="lbl">Recent alerts</div>
+    <div id="alerts" class="empty">No alerts yet.</div>
+  </div>
+
+  <div class="card">
+    <details id="mine">
+      <summary style="font-size:16px">I have my own trade idea</summary>
+      <div class="f">
+        <div class="full"><label>Coin</label><input id="mSym" placeholder="BTC"></div>
+        <div class="full"><label>I think the price will go</label><select id="mSide"><option value="1">Up (buy)</option><option value="-1">Down (sell)</option></select></div>
+        <div><label>I'll get in at</label><input id="mIn" type="number" step="any" inputmode="decimal"></div>
+        <div><label>Take profit at</label><input id="mTp" type="number" step="any" inputmode="decimal"></div>
+        <div class="full"><label>Get out if wrong at</label><input id="mSl" type="number" step="any" inputmode="decimal"></div>
+      </div>
+      <button class="big" id="mGo">Check it</button>
+      <div id="mOut"></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>More settings</summary>
+      <div class="f">
+        <div><label>Exchange minimum ($)</label><input id="minord" type="number" value="10"></div>
+        <div><label>Fee per trade (%)</label><input id="fee" type="number" value="0.1" step="0.01"></div>
+      </div>
+    </details>
+  </div>
+
+  <p class="foot">Signals come from past price patterns and can be wrong. Practise with no real money first. Not financial advice.</p>
+</div>
+
+<script src="config.js"></script>
+<script type="module">
+const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
+const $ = id => document.getElementById(id);
+const STYLES = {safe:{risk:.5,alloc:15}, normal:{risk:1,alloc:25}, bold:{risk:2,alloc:40}};
+let results = [], pickName = null, style = 'normal', nextRunMs = 0, demo = false, fb = null;
+const store = {get(k){try{return localStorage.getItem('th_'+k)}catch(e){return null}}, set(k,v){try{localStorage.setItem('th_'+k,v)}catch(e){}}};
+
+/* ---------- trade size ---------- */
+function size(e, s, t1, t2){
+  const S = STYLES[style], bal = +$('bal').value || 0, fee = +$('fee').value || 0, risk = bal*S.risk/100, pu = Math.abs(e-s);
+  let q = pu ? risk/pu : 0, sp = q*e; const mx = bal*S.alloc/100;
+  if (sp > mx){ sp = mx; q = mx/e }
+  const f = sp*fee/100*2;
+  return {spend:sp, max:mx, loss:q*pu+f, p1:q*Math.abs(t1-e)-f, p2:q*Math.abs(t2-e)-f, rr:pu?Math.abs(t1-e)/pu:0, small:sp<(+$('minord').value||0)};
+}
+
+/* ---------- screen ---------- */
+const fp = p => p>=100 ? p.toLocaleString(undefined,{maximumFractionDigits:2}) : p>=1 ? p.toFixed(4) : p.toPrecision(4);
+const $$ = x => '$'+x.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const st = n => '★'.repeat(n)+'<span style="opacity:.25">'+'★'.repeat(5-n)+'</span>';
+const arrow = {UP:'▲', DOWN:'▼', WAIT:'•'};
+function order(){
+  results.sort((a,b) => ((b.dir!=='WAIT')-(a.dir!=='WAIT')) || b.conf-a.conf);
+  if (!results.some(r => r.name === pickName)) pickName = results[0] && results[0].name;
+  render();
+}
+function render(){
+  const r = results.find(x => x.name === pickName); if (!r) return;
+  const h = $('hero'); h.className = 'card hero '+r.dir; void h.offsetWidth; h.classList.add('pop');
+  let x;
+  if (r.dir === 'WAIT'){
+    x = `<div class="action">WAIT</div><div class="meta"><span>${r.name}</span><span>No clear direction</span></div>
+      <p style="margin:0">The signals disagree, so there's no good trade on ${r.name} right now. Not trading is also a smart move.</p>`;
+  } else {
+    const z = size(r.price, r.stop, r.tp1, r.tp2), buy = r.dir === 'UP';
+    x = `<div class="action">${buy?'BUY':'SELL'} ${r.name}</div>
+      <div class="meta"><span class="stars">${st(r.stars)}</span><span>${r.conf}% sure</span></div>
+      <div class="step"><div class="num">1</div><div><b>${buy?'Buy':'Sell'} now at about ${fp(r.price)}</b><div class="s">Put in <b>${$$(z.spend)}</b> · never more than ${$$(z.max)}</div></div></div>
+      <div class="step"><div class="num">2</div><div><b class="g">Take profit at ${fp(r.tp1)}</b><div class="s">You make about <b class="g">+${$$(z.p1)}</b>. Feeling lucky? Leave half until ${fp(r.tp2)} (+${$$(z.p2)} total)</div></div></div>
+      <div class="step"><div class="num">3</div><div><b class="r">Get out if it reaches ${fp(r.stop)}</b><div class="s">Most you can lose: <b class="r">−${$$(z.loss)}</b></div></div></div>
+      ${!buy?'<p class="hint">Selling a coin you don\'t own needs a futures account. With a normal account, just don\'t buy it now.</p>':''}
+      ${z.small?'<p class="err">This amount is below your exchange\'s minimum. Skip it or add money.</p>':''}`;
+  }
+  x += `<div class="timer"><span>Next signal update in</span><b id="cd">--:--</b></div>
+    <details><summary>Why?</summary><ul class="why">${(r.checks||[]).map(c=>`<li>${c.score>0?'<span class="g">▲</span>':c.score<0?'<span class="r">▼</span>':'•'} ${c.note}</li>`).join('')}</ul></details>`;
+  h.innerHTML = x;
+  $('chips').innerHTML = results.map(c => `<button class="chip ${c.name===pickName?'on':''}" data-n="${c.name}">${c.name} <span class="${c.dir}">${arrow[c.dir]}</span> ${c.stars?c.stars+'★':''}</button>`).join('');
+  document.querySelectorAll('.chip').forEach(b => b.onclick = () => { pickName = b.dataset.n; render(); window.scrollTo({top:0, behavior:'smooth'}) });
+  tick();
+}
+function renderAlerts(list){
+  if (!list.length){ $('alerts').innerHTML = 'No alerts yet.'; $('alerts').className = 'empty'; return }
+  $('alerts').className = '';
+  $('alerts').innerHTML = list.map(a => `<div class="alert"><span><b class="${a.dir==='UP'?'g':'r'}">${a.dir==='UP'?'BUY':'SELL'} ${a.name}</b> at ${fp(a.price)} · ${'★'.repeat(a.stars)}</span><span class="t">${new Date(a.atMs).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit'})}</span></div>`).join('');
+}
+function tick(){
+  const el = $('cd'); if (!el) return;
+  let target = nextRunMs;
+  if (!target || target < Date.now()){ const h = 3600000; target = Math.floor(Date.now()/h)*h + h + 5*60000 }
+  const s = Math.max(0, Math.floor((target - Date.now())/1000)), mm = Math.floor(s/60);
+  el.textContent = String(mm).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+}
+setInterval(tick, 1000);
+function toast(text){ const t = document.createElement('div'); t.className = 'toast'; t.textContent = text; t.onclick = () => t.remove(); document.body.appendChild(t); setTimeout(() => t.remove(), 8000) }
+function setLive(state, text){ $('dot').className = 'dot '+state; $('liveTxt').textContent = text }
+function banner(text){ $('banner').textContent = text; $('banner').classList.toggle('hide', !text) }
+
+/* ---------- live data from Firebase ---------- */
+async function connect(){
+  const cfg = self.FIREBASE_CONFIG || {};
+  if (!cfg.apiKey || cfg.apiKey.startsWith('PASTE')) return startDemo('Not connected to Firebase yet: these are DEMO signals. Add your Firebase settings to config.js.');
+  try {
+    const [{initializeApp}, F] = await Promise.all([import(FB+'firebase-app.js'), import(FB+'firebase-firestore.js')]);
+    const app = initializeApp(cfg), db = F.getFirestore(app);
+    fb = {app, db, F};
+    F.onSnapshot(F.collection(db, 'signals'), snap => {
+      results = snap.docs.map(d => d.data()).filter(r => r.price);
+      if (results.length) order();
+    }, e => { setLive('off', 'Offline'); banner('Could not read signals: '+e.message) });
+    F.onSnapshot(F.doc(db, 'status', 'bot'), d => {
+      const s = d.data(); if (!s) { setLive('off', 'Waiting for bot'); banner('The bot has not run yet. Run it once from GitHub → Actions → Signal bot → Run workflow.'); return }
+      nextRunMs = s.nextRunMs || 0;
+      const age = Date.now() - (s.lastRunMs || 0);
+      const when = new Date(s.lastRunMs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      if (age > 3*3600000){ setLive('off', 'Updated '+new Date(s.lastRunMs).toLocaleString()); banner('The bot has not updated for over 3 hours. Check GitHub → Actions.') }
+      else { setLive('on', 'Live · updated '+when); banner('') }
+      tick();
+    });
+    F.onSnapshot(F.query(F.collection(db, 'alerts'), F.orderBy('atMs', 'desc'), F.limit(8)), snap => renderAlerts(snap.docs.map(d => d.data())));
+    setupAlerts();
+  } catch (e) { startDemo('Could not connect to Firebase ('+e.message+'). Showing DEMO signals.') }
+}
+
+/* ---------- push notifications ---------- */
+async function setupAlerts(){
+  const bell = $('bell'), hint = $('bellHint');
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent), installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  if (!('Notification' in window) || !('serviceWorker' in navigator)){
+    bell.disabled = true;
+    hint.innerHTML = isIOS && !installed ? 'On iPhone: tap <b>Share</b> → <b>Add to Home Screen</b>, open AI Trade Notify from your home screen, then turn on alerts here.' : 'This browser can\'t show alerts. Try Chrome, or the Android app.';
+    return;
+  }
+  const M = await import(FB+'firebase-messaging.js');
+  if (!(await M.isSupported())){ bell.disabled = true; hint.textContent = 'This browser can\'t show alerts. Try Chrome, or the Android app.'; return }
+  const messaging = M.getMessaging(fb.app);
+  M.onMessage(messaging, p => toast((p.notification && p.notification.title || 'New signal') + (p.notification && p.notification.body ? ' · '+p.notification.body : '')));
+  const done = () => { bell.className = 'bell done'; bell.textContent = '✓ Alerts are on'; hint.textContent = 'You\'ll get a notification for strong signals (4★ or more), at most 3 per hour.' };
+  if (Notification.permission === 'granted' && store.get('alerts') === 'on') done();
+  bell.onclick = async () => {
+    if (bell.classList.contains('done')) return;
+    try {
+      bell.textContent = 'Turning on…';
+      if (await Notification.requestPermission() !== 'granted') throw new Error('Notifications are blocked. Allow them in your browser settings.');
+      const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+      const token = await M.getToken(messaging, {vapidKey: self.VAPID_KEY, serviceWorkerRegistration: reg});
+      await fb.F.setDoc(fb.F.doc(fb.db, 'tokens', token), {platform: 'web', created: Date.now()});
+      store.set('alerts', 'on'); done();
+      hint.textContent = 'Alerts are on. They start from the next bot update (within 1 hour).';
+    } catch (e) { bell.textContent = '🔔 Turn on alerts'; hint.innerHTML = '<span class="r">'+e.message+'</span>' }
+  };
+}
+
+/* ---------- demo mode (before Firebase is set up) ---------- */
+function ema(v,n){const k=2/(n+1),o=[];let p=null;for(let i=0;i<v.length;i++){if(i<n-1){o.push(null);continue}p=p===null?v.slice(0,n).reduce((a,b)=>a+b,0)/n:v[i]*k+p*(1-k);o.push(p)}return o}
+function rsi(c,n=14){let g=0,l=0;for(let i=1;i<=n;i++){const d=c[i]-c[i-1];g+=Math.max(d,0);l+=Math.max(-d,0)}let ag=g/n,al=l/n;for(let i=n+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(n-1)+Math.max(d,0))/n;al=(al*(n-1)+Math.max(-d,0))/n}return al===0?100:100-100/(1+ag/al)}
+const avg = a => a.reduce((x,y)=>x+y,0)/a.length;
+function analyse(cd){
+  const c=cd.map(x=>x.c),price=c.at(-1),e9=ema(c,9),e21=ema(c,21),e50=ema(c,50),r=rsi(c);
+  const a12=ema(c,12),a26=ema(c,26),L=[];for(let i=0;i<c.length;i++)if(a12[i]!==null&&a26[i]!==null)L.push(a12[i]-a26[i]);const sg=ema(L,9),n=L.length,mh=L[n-1]-sg[n-1],mph=L[n-2]-sg[n-2];
+  const w=c.slice(-20),mid=avg(w),sd=Math.sqrt(w.reduce((s,x)=>s+(x-mid)**2,0)/20),lo=mid-2*sd,up=mid+2*sd;
+  const t=[];for(let i=1;i<cd.length;i++)t.push(Math.max(cd[i].h-cd[i].l,Math.abs(cd[i].h-cd[i-1].c),Math.abs(cd[i].l-cd[i-1].c)));let a=avg(t.slice(0,14));for(const x of t.slice(14))a=(a*13+x)/14;
+  const vn=avg(cd.slice(-5).map(x=>x.v)),va=avg(cd.slice(-50).map(x=>x.v)),ck=[];
+  const tr=price>e50.at(-1)&&e21.at(-1)>e50.at(-1)?1:price<e50.at(-1)&&e21.at(-1)<e50.at(-1)?-1:0;ck.push([tr,2,tr>0?'The bigger trend is going up':tr<0?'The bigger trend is going down':'No clear bigger trend']);
+  const cr=e9.at(-1)>e21.at(-1)?1:-1;ck.push([cr,1.5,cr>0?'Recent prices are rising':'Recent prices are falling']);
+  const rs=r>50&&r<70?1:r>30&&r<50?-1:r>=70?-0.5:0.5;ck.push([rs,1,r>=70?'Bought too much already, may pull back':r<=30?'Sold too much already, may bounce':r>50?'Buyers are stronger':'Sellers are stronger']);
+  const m=mh>0&&mh>mph?1:mh<0&&mh<mph?-1:mh>0?0.5:-0.5;ck.push([m,1.5,m>0?'Upward speed is growing':'Downward speed is growing']);
+  const bs=price>up?-0.5:price<lo?0.5:price>mid?0.5:-0.5;ck.push([bs,1,price>up?'Price is unusually high':price<lo?'Price is unusually low':price>mid?'Price is in the top half of its range':'Price is in the bottom half of its range']);
+  const vs=vn>va*1.2?1:0;
+  let raw=ck.reduce((s,x)=>s+x[0]*x[1],0)/ck.reduce((s,x)=>s+x[1],0);if(vs&&raw!==0)raw=Math.max(-1,Math.min(1,raw*1.15));
+  ck.push([vs,1,vs?'More people trading than usual (confirms the move)':'Normal trading activity']);
+  const conf=Math.round(Math.abs(raw)*100),dir=conf<35?'WAIT':raw>0?'UP':'DOWN',stars=dir==='WAIT'?0:Math.min(5,1+Math.floor(conf/18)),s1=dir==='UP'?1:-1;
+  return{price,dir,conf,stars,stop:price-s1*1.5*a,tp1:price+s1*2*a,tp2:price+s1*4*a,checks:ck.map(x=>({score:x[0],note:x[2]}))};
+}
+function startDemo(msg){
+  demo = true; banner(msg); setLive('off', 'Demo');
+  let seed = 7; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647, gs = () => Math.sqrt(-2*Math.log(rnd()))*Math.cos(2*Math.PI*rnd());
+  results = [['BTC',64000,.0015],['ETH',3200,-.002],['SOL',150,.003],['XRP',.55,0],['ADA',.45,-.001],['LINK',14,.0008]].map(([n,p,d]) => {
+    const cd = []; for (let i=0; i<200; i++){ const o=p; p*=1+d+gs()*.009; cd.push({o, h:Math.max(o,p)*(1+rnd()*.004), l:Math.min(o,p)*(1-rnd()*.004), c:p, v:(80+rnd()*40)*(i>194&&d?1.6:1)}) }
+    return {name:n, ...analyse(cd)};
+  });
+  order();
+  $('bell').disabled = true; $('bellHint').textContent = 'Alerts work once Firebase is connected.';
+}
+
+/* ---------- settings ---------- */
+function setStyle(s){ style = s; store.set('style', s); document.querySelectorAll('#style button').forEach(b => b.classList.toggle('on', b.dataset.s === s)); render() }
+document.querySelectorAll('#style button').forEach(b => b.onclick = () => setStyle(b.dataset.s));
+['bal','minord','fee'].forEach(id => { const v = store.get(id); if (v !== null) $(id).value = v; $(id).addEventListener('input', () => { store.set(id, $(id).value); render() }) });
+setStyle(store.get('style') || 'normal');
+
+/* ---------- my own idea ---------- */
+$('mGo').onclick = () => {
+  const sd = +$('mSide').value, e = +$('mIn').value, t = +$('mTp').value, s = +$('mSl').value, o = $('mOut');
+  if (!e || !t || !s){ o.innerHTML = '<p class="err">Please fill in all three prices.</p>'; return }
+  if ((s-e)*sd >= 0 || (t-e)*sd <= 0){ o.innerHTML = '<p class="err">'+(sd>0?'For "up": the get-out price must be below your entry, and the profit price above it.':'For "down": the get-out price must be above your entry, and the profit price below it.')+'</p>'; return }
+  const z = size(e, s, t, t), sym = ($('mSym').value||'').toUpperCase().replace(/USDT?$/,'').trim(), m = results.find(r => r.name === sym);
+  const grade = z.rr >= 2 ? '<b class="g">Good trade</b>' : z.rr >= 1.5 ? '<b>OK trade</b>' : '<b class="r">Weak trade</b>: you could lose more than you\'d win';
+  let agree = ''; if (m) agree = (m.dir==='UP'&&sd>0)||(m.dir==='DOWN'&&sd<0) ? '<br><span class="g">✓ The signals agree with you.</span>' : m.dir==='WAIT' ? '<br><span style="color:var(--wait)">• The signals see no clear direction.</span>' : '<br><span class="r">✗ The signals point the other way. Be careful.</span>';
+  o.innerHTML = `<div class="ans">${grade}${agree}<br><br>Put in <b>${$$(z.spend)}</b><br>If right: <b class="g">+${$$(z.p1)}</b><br>If wrong: <b class="r">−${$$(z.loss)}</b></div>`;
+};
+
+connect();
+</script>
+</body>
+</html>
