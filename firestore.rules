@@ -5,6 +5,7 @@ service cloud.firestore {
     match /signals/{id} { allow read: if true; allow write: if false; }
     match /status/{id}  { allow read: if true; allow write: if false; }
     match /alerts/{id}  { allow read: if true; allow write: if false; }
+    match /picks/{id}   { allow read: if true; allow write: if false; }
 
     // Browsers may only drop off their alert token. Nobody can read tokens.
     match /tokens/{token} {
