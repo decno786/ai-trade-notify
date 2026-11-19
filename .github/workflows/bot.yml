@@ -1,0 +1,49 @@
+name: Signal bot
+
+on:
+  schedule:
+    - cron: '3 * * * *'      # every hour, 3 minutes after the hourly candle closes
+  workflow_dispatch:
+    inputs:
+      test_push:
+        description: 'Also send a test notification'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency: signal-bot
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: bot/requirements.txt
+
+      - run: pip install -r bot/requirements.txt
+
+      - name: Make signals
+        run: python bot/signal_bot.py
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          TEST_PUSH: ${{ inputs.test_push && '1' || '0' }}
+
+      # GitHub pauses hourly robots in repos with no changes for 60 days. This keeps it running.
+      - name: Keep the schedule alive
+        run: |
+          days=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          if [ "$days" -ge 50 ]; then
+            git config user.name "trade-helper-bot"
+            git config user.email "trade-helper-bot@users.noreply.github.com"
+            git commit --allow-empty -m "Keep signal bot schedule active"
+            git push
+          fi
