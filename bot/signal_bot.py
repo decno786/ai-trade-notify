@@ -146,7 +146,18 @@ def analyse(cd):
     d = "WAIT" if conf < 35 else "UP" if raw > 0 else "DOWN"
     stars = 0 if d == "WAIT" else min(5, 1 + conf // 18)
     s = 1 if d == "UP" else -1
-    return {"price": price, "dir": d, "conf": conf, "stars": stars, "atr": a, "rsi": round(r, 1),
+    day = cd[-24:]
+    o24 = day[0]["o"]
+    extra = {
+        "chg24": round((price / o24 - 1) * 100, 2) if o24 else 0,
+        "hi24": max(x["h"] for x in day), "lo24": min(x["l"] for x in day),
+        "vol24": round(sum(x["v"] * x["c"] for x in day)),
+        "ema21": e21[-1], "ema50": e50[-1], "macd": mh, "bbPos": round((price - lo) / (up - lo), 3) if up > lo else 0.5,
+        "volRatio": round(vn / va, 2) if va else 1,
+        # last 72 hourly candles for the charts: [time, open, high, low, close]
+        "candles": [[x["t"], x["o"], x["h"], x["l"], x["c"]] for x in cd[-72:]],
+    }
+    return {**extra, "price": price, "dir": d, "conf": conf, "stars": stars, "atr": a, "rsi": round(r, 1),
             "stop": price - s * 1.5 * a, "tp1": price + s * 2 * a, "tp2": price + s * 4 * a,
             "checks": [{"label": n, "score": sc, "note": note} for n, sc, _, note in ck],
             "candleClose": cd[-1]["t"] + TF_MIN * 60000}
@@ -249,9 +260,8 @@ def main():
         alerts = sorted(alerts, key=lambda s: s["conf"], reverse=True)[:MAX_ALERTS_PER_RUN]
         for s in alerts:
             buy = s["dir"] == "UP"
-            title = f"{'BUY' if buy else 'SELL'} {s['name']} {'▲' if buy else '▼'}  {'★' * s['stars']} ({s['conf']}% sure)"
-            body = (f"{'Buy' if buy else 'Sell'} at about {fmt(s['price'])} · take profit {fmt(s['tp1'])}"
-                    f" · get out at {fmt(s['stop'])}")
+            title = f"{'BUY' if buy else 'SELL'} {s['name']}/USDT {'▲' if buy else '▼'} · Signal strength {s['conf']}/100"
+            body = f"Entry {fmt(s['price'])} · Target {fmt(s['tp1'])} · Stop {fmt(s['stop'])}"
             db.collection("alerts").add({
                 "name": s["name"], "dir": s["dir"], "conf": s["conf"], "stars": s["stars"],
                 "price": s["price"], "tp1": s["tp1"], "stop": s["stop"],
@@ -263,7 +273,7 @@ def main():
                 print("Push failed:", e)
 
         if os.environ.get("TEST_PUSH") == "1":
-            push(messaging, "AI Trade Notify test ✅", "Alerts are working. You'll get a message like this for strong signals.", app_url)
+            push(messaging, "AI Trade Notify · test", "Alerts are working. You'll get a message like this for strong signals.", app_url)
             print("Test notification sent.")
 
     print(f"\nBest now: {best['name']} {best['dir']} {best['conf']}%. New alerts: {len(alerts)}.")
