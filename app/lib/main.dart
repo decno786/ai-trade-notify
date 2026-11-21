@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' show FontFeature;
 
@@ -7,58 +8,55 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_config.dart';
 
-// ================================================================ look & feel
-const kBg = Color(0xFF0A0F1E);
-const kBg2 = Color(0xFF111833);
-const kSurface = Color(0xFF131A2F);
-const kSurface2 = Color(0xFF1B2442);
-const kBorder = Color(0xFF263052);
-const kText = Color(0xFFEAF0FF);
-const kMuted = Color(0xFF8C98BC);
-const kUp = Color(0xFF22C55E);
-const kDown = Color(0xFFF0445A);
-const kWait = Color(0xFFF5A524);
-const kAccent = Color(0xFF5B7CFF);
-const kAccent2 = Color(0xFFA35CFF);
-const kStar = Color(0xFFFFC53D);
-const kGradient = LinearGradient(
-  colors: [kAccent, kAccent2],
-  begin: Alignment.topLeft,
-  end: Alignment.bottomRight,
-);
-const kBgGradient = LinearGradient(
-  colors: [kBg2, kBg, kBg],
-  stops: [0, 0.45, 1],
-  begin: Alignment.topCenter,
-  end: Alignment.bottomCenter,
-);
+// ================================================================ design tokens
+const kBg = Color(0xFF0B0E14);
+const kPanel = Color(0xFF11151D);
+const kPanel2 = Color(0xFF161B25);
+const kLine = Color(0xFF1F2633);
+const kLine2 = Color(0xFF2A3343);
+const kText = Color(0xFFE8ECF3);
+const kMuted = Color(0xFF8A94A6);
+const kDim = Color(0xFF5B6577);
+const kUp = Color(0xFF16C784);
+const kDown = Color(0xFFEA3943);
+const kWarn = Color(0xFFF0B90B);
+const kAccent = Color(0xFF3B82F6);
+const kEma21 = Color(0xFFF0B90B);
+const kEma50 = Color(0xFFA78BFA);
 
 const appName = 'AI Trade Notify';
 const topic = 'signals';
+const binance = 'https://data-api.binance.vision/api/v3/';
 
-/// style -> [risk % per trade, max % of money in one trade]
-const styles = <String, List<double>>{
-  'safe': [0.5, 15],
-  'normal': [1, 25],
-  'bold': [2, 40],
+const tabular = [FontFeature.tabularFigures()];
+TextStyle mono(double size, {Color color = kText, FontWeight w = FontWeight.w600}) =>
+    TextStyle(fontSize: size, color: color, fontWeight: w, fontFeatures: tabular, letterSpacing: -0.2);
+
+const coinNames = {
+  'BTC': 'Bitcoin', 'ETH': 'Ethereum', 'SOL': 'Solana', 'XRP': 'XRP', 'BNB': 'BNB',
+  'ADA': 'Cardano', 'DOGE': 'Dogecoin', 'AVAX': 'Avalanche', 'LINK': 'Chainlink', 'DOT': 'Polkadot',
 };
-const styleNames = {'safe': 'Safe', 'normal': 'Normal', 'bold': 'Bold'};
-const styleInfo = {
-  'safe': 'Risk 0.5% per trade',
-  'normal': 'Risk 1% per trade',
-  'bold': 'Risk 2% per trade',
+const coinColors = {
+  'BTC': Color(0xFFF7931A), 'ETH': Color(0xFF627EEA), 'SOL': Color(0xFF9945FF), 'XRP': Color(0xFF23292F),
+  'BNB': Color(0xFFF0B90B), 'ADA': Color(0xFF0033AD), 'DOGE': Color(0xFFC2A633), 'AVAX': Color(0xFFE84142),
+  'LINK': Color(0xFF2A5ADA), 'DOT': Color(0xFFE6007A),
 };
+
+/// risk profile -> [risk % per trade, max % of account in one position]
+const riskProfiles = <String, List<double>>{'safe': [0.5, 15], 'normal': [1, 25], 'bold': [2, 40]};
+const riskNames = {'safe': 'Conservative', 'normal': 'Moderate', 'bold': 'Aggressive'};
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
-    systemNavigationBarColor: kSurface,
+    systemNavigationBarColor: kPanel,
     systemNavigationBarIconBrightness: Brightness.light,
   ));
   final configured = !fbApiKey.startsWith('PASTE');
@@ -82,49 +80,45 @@ class AiTradeApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: kAccent,
-      brightness: Brightness.dark,
-      surface: kSurface,
-    );
+    OutlineInputBorder border(Color c) =>
+        OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: c));
     return MaterialApp(
       title: appName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        colorScheme: scheme,
+        colorScheme: ColorScheme.fromSeed(seedColor: kAccent, brightness: Brightness.dark, surface: kPanel),
         scaffoldBackgroundColor: kBg,
-        navigationBarTheme: NavigationBarThemeData(
-          backgroundColor: kSurface,
-          indicatorColor: kAccent.withValues(alpha: 0.22),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: kBg,
+          surfaceTintColor: Colors.transparent,
           elevation: 0,
-          height: 68,
+          titleTextStyle: TextStyle(color: kText, fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: kPanel,
+          indicatorColor: kAccent.withValues(alpha: 0.18),
+          elevation: 0,
+          height: 64,
+          labelTextStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
         ),
         snackBarTheme: const SnackBarThemeData(
           behavior: SnackBarBehavior.floating,
-          backgroundColor: kSurface2,
+          backgroundColor: kPanel2,
           contentTextStyle: TextStyle(color: kText, fontSize: 14),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: kSurface2,
+          fillColor: kPanel2,
           labelStyle: const TextStyle(color: kMuted),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: kBorder),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: kBorder),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: kAccent, width: 1.6),
-          ),
+          border: border(kLine),
+          enabledBorder: border(kLine),
+          focusedBorder: border(kAccent),
         ),
+        dividerColor: kLine,
       ),
-      home: configured ? const SplashScreen() : const NotSetUpPage(),
+      home: configured ? const HomeShell() : const NotSetUpPage(),
     );
   }
 }
@@ -137,12 +131,8 @@ class NotSetUpPage extends StatelessWidget {
         body: Center(
           child: Padding(
             padding: EdgeInsets.all(28),
-            child: Text(
-              '$appName is not connected to Firebase yet.\n\n'
-              'Add google-services.json to the app folder on GitHub and build the app again.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: kMuted),
-            ),
+            child: Text('$appName is not connected to Firebase yet.',
+                textAlign: TextAlign.center, style: TextStyle(color: kMuted)),
           ),
         ),
       );
@@ -151,6 +141,13 @@ class NotSetUpPage extends StatelessWidget {
 // ================================================================ data
 double _d(dynamic v) => v is num ? v.toDouble() : 0;
 int _i(dynamic v) => v is num ? v.toInt() : 0;
+
+class Candle {
+  Candle(this.t, this.o, this.h, this.l, this.c);
+  final int t;
+  final double o;
+  double h, l, c;
+}
 
 class Signal {
   Signal.fromMap(Map<String, dynamic> m)
@@ -161,24 +158,37 @@ class Signal {
         tp1 = _d(m['tp1']),
         tp2 = _d(m['tp2']),
         conf = _i(m['conf']),
-        stars = _i(m['stars']),
+        rsi = m['rsi'] is num ? _d(m['rsi']) : null,
+        ema21 = m['ema21'] is num ? _d(m['ema21']) : null,
+        ema50 = m['ema50'] is num ? _d(m['ema50']) : null,
+        macd = m['macd'] is num ? _d(m['macd']) : null,
+        bbPos = m['bbPos'] is num ? _d(m['bbPos']) : null,
+        volRatio = m['volRatio'] is num ? _d(m['volRatio']) : null,
+        chg24 = m['chg24'] is num ? _d(m['chg24']) : null,
+        hi24 = _d(m['hi24']),
+        lo24 = _d(m['lo24']),
+        vol24 = _d(m['vol24']),
         checks = ((m['checks'] as List?) ?? const [])
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
+            .toList(),
+        candles = ((m['candles'] as List?) ?? const [])
+            .whereType<List>()
+            .where((x) => x.length >= 5)
+            .map((x) => Candle(_i(x[0]), _d(x[1]), _d(x[2]), _d(x[3]), _d(x[4])))
             .toList();
 
   final String name, dir;
-  final double price, stop, tp1, tp2;
-  final int conf, stars;
+  final double price, stop, tp1, tp2, hi24, lo24, vol24;
+  final double? rsi, ema21, ema50, macd, bbPos, volRatio, chg24;
+  final int conf;
   final List<Map<String, dynamic>> checks;
+  final List<Candle> candles;
 
   bool get isUp => dir == 'UP';
   bool get isWait => dir == 'WAIT';
-  Color get color => isWait ? kWait : (isUp ? kUp : kDown);
-  String get verb => isWait ? 'Wait' : (isUp ? 'Buy' : 'Sell');
-  IconData get icon => isWait
-      ? Icons.remove_rounded
-      : (isUp ? Icons.trending_up_rounded : Icons.trending_down_rounded);
+  String get action => isWait ? 'WAIT' : (isUp ? 'BUY' : 'SELL');
+  Color get color => isWait ? kMuted : (isUp ? kUp : kDown);
 
   static int compare(Signal a, Signal b) {
     final w = (b.isWait ? 0 : 1) - (a.isWait ? 0 : 1);
@@ -186,55 +196,172 @@ class Signal {
   }
 }
 
+class LiveTicker {
+  LiveTicker(this.price, this.chg, this.high, this.low, this.quoteVol);
+  final double price, chg, high, low, quoteVol;
+}
+
 class Plan {
-  Plan(this.spend, this.max, this.loss, this.win1, this.win2, this.ratio, this.tooSmall);
-  final double spend, max, loss, win1, win2, ratio;
+  Plan(this.spend, this.units, this.loss, this.win1, this.win2, this.ratio, this.tooSmall);
+  final double spend, units, loss, win1, win2, ratio;
   final bool tooSmall;
 }
 
-class SettingsModel extends ChangeNotifier {
+String strengthLabel(int c) => c >= 75 ? 'Very strong' : c >= 55 ? 'Strong' : c >= 35 ? 'Moderate' : 'Weak';
+
+String _commas(String s) {
+  final parts = s.split('.');
+  final whole = parts[0].replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]},');
+  return parts.length > 1 ? '$whole.${parts[1]}' : whole;
+}
+
+String fp(double p) {
+  if (p.isNaN || p == 0) return '—';
+  final a = p.abs();
+  return a >= 1000
+      ? _commas(p.toStringAsFixed(2))
+      : a >= 100
+          ? p.toStringAsFixed(2)
+          : a >= 1
+              ? p.toStringAsFixed(4)
+              : p.toStringAsPrecision(4);
+}
+
+String money(double x) => '\$${_commas(x.toStringAsFixed(2))}';
+String pct(double x) => '${x > 0 ? '+' : ''}${x.toStringAsFixed(2)}%';
+String bigNum(double x) => x >= 1e9
+    ? '${(x / 1e9).toStringAsFixed(2)}B'
+    : x >= 1e6
+        ? '${(x / 1e6).toStringAsFixed(2)}M'
+        : x >= 1e3
+            ? '${(x / 1e3).toStringAsFixed(1)}K'
+            : x.toStringAsFixed(0);
+String two(int n) => n.toString().padLeft(2, '0');
+
+String timeAgo(int ms) {
+  if (ms <= 0) return '';
+  final m = (DateTime.now().millisecondsSinceEpoch - ms) ~/ 60000;
+  if (m < 1) return 'just now';
+  if (m < 60) return '$m min ago';
+  final h = m ~/ 60;
+  if (h < 24) return '${h}h ago';
+  final t = DateTime.fromMillisecondsSinceEpoch(ms);
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return '${days[t.weekday - 1]} ${two(t.hour)}:${two(t.minute)}';
+}
+
+// ================================================================ app state
+class AppState extends ChangeNotifier {
+  final _db = FirebaseFirestore.instance;
+  final _subs = <StreamSubscription<dynamic>>[];
   SharedPreferences? _p;
+  Timer? _poll, _sparkTimer;
+
+  Map<String, Signal> signals = {};
+  List<String> order = [];
+  Map<String, dynamic>? status, picks;
+  List<Map<String, dynamic>> alerts = [];
+  Map<String, LiveTicker> live = {};
+  Map<String, List<double>> sparks = {};
+  bool liveOk = false, loaded = false;
+  String? error;
+
   double balance = 1000, fee = 0.1, minOrder = 10;
-  String style = 'normal';
+  String risk = 'normal';
   bool alertsOn = false, askedAlerts = false;
 
-  Future<void> load() async {
+  Future<void> start() async {
     final p = await SharedPreferences.getInstance();
     _p = p;
     balance = p.getDouble('bal') ?? 1000;
     fee = p.getDouble('fee') ?? 0.1;
     minOrder = p.getDouble('min') ?? 10;
-    style = p.getString('style') ?? 'normal';
+    risk = p.getString('style') ?? 'normal';
     alertsOn = p.getBool('alerts') ?? false;
     askedAlerts = p.getBool('asked') ?? false;
+
+    _subs.add(_db.collection('signals').snapshots().listen((q) {
+      final list = q.docs.map((d) => Signal.fromMap(d.data())).where((s) => s.price > 0).toList()
+        ..sort(Signal.compare);
+      final firstLoad = signals.isEmpty;
+      signals = {for (final s in list) s.name: s};
+      order = list.map((s) => s.name).toList();
+      loaded = true;
+      error = null;
+      notifyListeners();
+      if (firstLoad && order.isNotEmpty) {
+        _pollTickers();
+        _loadSparks();
+        _poll ??= Timer.periodic(const Duration(seconds: 5), (_) => _pollTickers());
+        _sparkTimer ??= Timer.periodic(const Duration(minutes: 10), (_) => _loadSparks());
+      }
+    }, onError: (Object e) {
+      error = '$e';
+      loaded = true;
+      notifyListeners();
+    }));
+    _subs.add(_db.collection('status').doc('bot').snapshots().listen((d) {
+      status = d.data();
+      notifyListeners();
+    }, onError: (Object e) {}));
+    _subs.add(_db.collection('alerts').orderBy('atMs', descending: true).limit(30).snapshots().listen((q) {
+      alerts = q.docs.map((d) => d.data()).toList();
+      notifyListeners();
+    }, onError: (Object e) {}));
+    _subs.add(_db.collection('picks').doc('latest').snapshots().listen((d) {
+      picks = d.data();
+      notifyListeners();
+    }, onError: (Object e) {}));
+  }
+
+  Future<void> _pollTickers() async {
+    if (order.isEmpty) return;
+    final syms = jsonEncode(order.map((n) => '${n}USDT').toList());
+    try {
+      final r = await http
+          .get(Uri.parse('${binance}ticker/24hr?symbols=${Uri.encodeComponent(syms)}'))
+          .timeout(const Duration(seconds: 8));
+      if (r.statusCode != 200) throw Exception(r.statusCode);
+      for (final t in (jsonDecode(r.body) as List).cast<Map<String, dynamic>>()) {
+        final n = (t['symbol'] as String).replaceAll('USDT', '');
+        live[n] = LiveTicker(double.parse(t['lastPrice'] as String), double.parse(t['priceChangePercent'] as String),
+            double.parse(t['highPrice'] as String), double.parse(t['lowPrice'] as String),
+            double.parse(t['quoteVolume'] as String));
+      }
+      liveOk = true;
+    } catch (_) {
+      liveOk = false;
+    }
     notifyListeners();
   }
 
-  void setBalance(double v) {
-    balance = v;
-    _p?.setDouble('bal', v);
+  Future<void> _loadSparks() async {
+    await Future.wait(order.map((n) async {
+      try {
+        final r = await http
+            .get(Uri.parse('${binance}klines?symbol=${n}USDT&interval=1h&limit=48'))
+            .timeout(const Duration(seconds: 8));
+        if (r.statusCode == 200) {
+          sparks[n] = (jsonDecode(r.body) as List).map((k) => double.parse((k as List)[4] as String)).toList();
+        }
+      } catch (_) {}
+    }));
     notifyListeners();
   }
 
-  void setFee(double v) {
-    fee = v;
-    _p?.setDouble('fee', v);
-    notifyListeners();
-  }
+  double? priceOf(String n) => live[n]?.price ?? signals[n]?.price;
+  double? chgOf(String n) => live[n]?.chg ?? signals[n]?.chg24;
+  List<double> sparkOf(String n) => sparks[n] ?? (signals[n]?.candles ?? const []).map((c) => c.c).toList();
 
-  void setMin(double v) {
-    minOrder = v;
-    _p?.setDouble('min', v);
-    notifyListeners();
-  }
+  int get lastRunMs => _i(status?['lastRunMs']);
+  int get nextRunMs => _i(status?['nextRunMs']);
+  bool get stale => lastRunMs > 0 && DateTime.now().millisecondsSinceEpoch - lastRunMs > 3 * 3600000;
 
-  void setStyle(String v) {
-    style = v;
-    _p?.setString('style', v);
-    notifyListeners();
-  }
-
-  void setAlerts(bool v) {
+  void setBalance(double v) { balance = v; _p?.setDouble('bal', v); notifyListeners(); }
+  void setFee(double v) { fee = v; _p?.setDouble('fee', v); notifyListeners(); }
+  void setMin(double v) { minOrder = v; _p?.setDouble('min', v); notifyListeners(); }
+  void setRisk(String v) { risk = v; _p?.setString('style', v); notifyListeners(); }
+  void _setAlertsPref(bool v) {
     alertsOn = v;
     askedAlerts = true;
     _p?.setBool('alerts', v);
@@ -242,8 +369,28 @@ class SettingsModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<String?> setAlerts(bool on) async {
+    final fm = FirebaseMessaging.instance;
+    try {
+      if (on) {
+        final s = await fm.requestPermission();
+        if (s.authorizationStatus == AuthorizationStatus.denied) {
+          _setAlertsPref(false);
+          return 'Notifications are blocked. Allow them in Settings → Apps → $appName.';
+        }
+        await fm.subscribeToTopic(topic);
+      } else {
+        await fm.unsubscribeFromTopic(topic);
+      }
+      _setAlertsPref(on);
+      return on ? 'Alerts enabled' : 'Alerts disabled';
+    } catch (e) {
+      return 'Could not change alerts: $e';
+    }
+  }
+
   Plan plan(double entry, double stop, double t1, double t2) {
-    final s = styles[style]!;
+    final s = riskProfiles[risk]!;
     final perUnit = (entry - stop).abs();
     var qty = perUnit > 0 ? balance * s[0] / 100 / perUnit : 0.0;
     var spend = qty * entry;
@@ -253,146 +400,22 @@ class SettingsModel extends ChangeNotifier {
       qty = entry > 0 ? max / entry : 0;
     }
     final fees = spend * fee / 100 * 2;
-    return Plan(
-      spend,
-      max,
-      qty * perUnit + fees,
-      qty * (t1 - entry).abs() - fees,
-      qty * (t2 - entry).abs() - fees,
-      perUnit > 0 ? (t1 - entry).abs() / perUnit : 0,
-      spend < minOrder,
-    );
-  }
-}
-
-String _commas(String s) {
-  final parts = s.split('.');
-  final whole = parts[0].replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]},');
-  return parts.length > 1 ? '$whole.${parts[1]}' : whole;
-}
-
-String fp(double p) => p >= 100
-    ? _commas(p.toStringAsFixed(2))
-    : p >= 1
-        ? p.toStringAsFixed(4)
-        : p.toStringAsPrecision(4);
-
-String money(double x) => '\$${_commas(x.toStringAsFixed(2))}';
-
-String two(int n) => n.toString().padLeft(2, '0');
-
-String timeAgo(int ms) {
-  if (ms <= 0) return '';
-  final diff = DateTime.now().millisecondsSinceEpoch - ms;
-  final m = diff ~/ 60000;
-  if (m < 1) return 'just now';
-  if (m < 60) return '$m min ago';
-  final h = m ~/ 60;
-  if (h < 24) return '$h h ago';
-  final t = DateTime.fromMillisecondsSinceEpoch(ms);
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  return '${days[t.weekday - 1]} ${two(t.hour)}:${two(t.minute)}';
-}
-
-// ================================================================ splash
-class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
-
-  @override
-  State<SplashScreen> createState() => _SplashScreenState();
-}
-
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1500))..forward();
-  Timer? _t;
-
-  @override
-  void initState() {
-    super.initState();
-    _t = Timer(const Duration(milliseconds: 1900), () {
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(PageRouteBuilder<void>(
-        transitionDuration: const Duration(milliseconds: 650),
-        pageBuilder: (context, a, b) => const HomeShell(),
-        transitionsBuilder: (context, a, b, child) => FadeTransition(opacity: a, child: child),
-      ));
-    });
+    return Plan(spend, qty, qty * perUnit + fees, qty * (t1 - entry).abs() - fees, qty * (t2 - entry).abs() - fees,
+        perUnit > 0 ? (t1 - entry).abs() / perUnit : 0, spend < minOrder);
   }
 
   @override
   void dispose() {
-    _t?.cancel();
-    _c.dispose();
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _poll?.cancel();
+    _sparkTimer?.cancel();
     super.dispose();
   }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(gradient: kBgGradient),
-        child: Center(
-          child: AnimatedBuilder(
-            animation: _c,
-            builder: (context, _) {
-              final v = _c.value;
-              final pop = Curves.easeOutBack.transform(v.clamp(0.0, 1.0).toDouble());
-              final fade = Curves.easeOut.transform((v * 1.6).clamp(0.0, 1.0).toDouble());
-              final text = Curves.easeOut.transform(((v - 0.35) / 0.65).clamp(0.0, 1.0).toDouble());
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Opacity(
-                    opacity: fade,
-                    child: Transform.scale(
-                      scale: 0.55 + 0.45 * pop,
-                      child: Transform.rotate(angle: (1 - pop) * -0.5, child: const AppLogo(size: 104)),
-                    ),
-                  ),
-                  const SizedBox(height: 26),
-                  Opacity(
-                    opacity: text,
-                    child: Transform.translate(
-                      offset: Offset(0, 14 * (1 - text)),
-                      child: const Column(children: [
-                        Text(appName,
-                            style: TextStyle(color: kText, fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: 0.3)),
-                        SizedBox(height: 6),
-                        Text('Smart crypto signals, live', style: TextStyle(color: kMuted, fontSize: 15)),
-                      ]),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
 }
 
-class AppLogo extends StatelessWidget {
-  const AppLogo({super.key, this.size = 44});
-  final double size;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          gradient: kGradient,
-          borderRadius: BorderRadius.circular(size * 0.3),
-          boxShadow: [
-            BoxShadow(color: kAccent.withValues(alpha: 0.45), blurRadius: size * 0.4, offset: Offset(0, size * 0.12)),
-          ],
-        ),
-        child: Icon(Icons.show_chart_rounded, color: Colors.white, size: size * 0.6),
-      );
-}
-
-// ================================================================ app shell
+// ================================================================ shell
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -401,384 +424,695 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  final _db = FirebaseFirestore.instance;
-  final settings = SettingsModel();
-  final _subs = <StreamSubscription<dynamic>>[];
-  List<Signal>? signals;
-  Map<String, dynamic>? status;
-  Map<String, dynamic>? picksDoc;
-  List<Map<String, dynamic>> alerts = [];
-  String? error;
-  String? picked;
+  final app = AppState();
+  StreamSubscription<RemoteMessage>? _msgSub;
   int tab = 0;
 
   @override
   void initState() {
     super.initState();
-    settings.addListener(_changed);
-    settings.load().then((_) {
-      if (!settings.askedAlerts) _setAlerts(true, quiet: true);
+    app.start().then((_) {
+      if (!app.askedAlerts) app.setAlerts(true);
     });
-    _subs.add(_db.collection('signals').snapshots().listen((q) {
-      final list = q.docs.map((d) => Signal.fromMap(d.data())).where((s) => s.price > 0).toList()
-        ..sort(Signal.compare);
-      setState(() {
-        signals = list;
-        error = null;
-      });
-    }, onError: (Object e) => setState(() => error = '$e')));
-    _subs.add(_db.collection('status').doc('bot').snapshots().listen((d) {
-      setState(() => status = d.data());
-    }, onError: (Object e) {}));
-    _subs.add(_db.collection('alerts').orderBy('atMs', descending: true).limit(30).snapshots().listen((q) {
-      setState(() => alerts = q.docs.map((d) => d.data()).toList());
-    }, onError: (Object e) {}));
-    _subs.add(_db.collection('picks').doc('latest').snapshots().listen((d) {
-      setState(() => picksDoc = d.data());
-    }, onError: (Object e) {}));
-    _subs.add(FirebaseMessaging.onMessage.listen((m) {
+    _msgSub = FirebaseMessaging.onMessage.listen((m) {
       final n = m.notification;
       if (n == null || !mounted) return;
       HapticFeedback.mediumImpact();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         duration: const Duration(seconds: 8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         content: Row(children: [
-          const AppLogo(size: 34),
+          const AppLogo(size: 30),
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
               Text(n.title ?? 'New signal', style: const TextStyle(fontWeight: FontWeight.w700, color: kText)),
-              if ((n.body ?? '').isNotEmpty) Text(n.body!, style: const TextStyle(color: kMuted, fontSize: 13)),
+              if ((n.body ?? '').isNotEmpty) Text(n.body!, style: mono(12.5, color: kMuted, w: FontWeight.w500)),
             ]),
           ),
         ]),
       ));
-    }));
-  }
-
-  void _changed() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    for (final s in _subs) {
-      s.cancel();
-    }
-    settings.removeListener(_changed);
-    super.dispose();
-  }
-
-  void _snack(String t) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
-  }
-
-  Future<void> _setAlerts(bool on, {bool quiet = false}) async {
-    final fm = FirebaseMessaging.instance;
-    try {
-      if (on) {
-        final s = await fm.requestPermission();
-        if (s.authorizationStatus == AuthorizationStatus.denied) {
-          settings.setAlerts(false);
-          if (!quiet) _snack('Notifications are blocked. Allow them in phone Settings → Apps → $appName.');
-          return;
-        }
-        await fm.subscribeToTopic(topic);
-      } else {
-        await fm.unsubscribeFromTopic(topic);
-      }
-      settings.setAlerts(on);
-      HapticFeedback.lightImpact();
-      if (!quiet) _snack(on ? '🔔 Alerts are on' : 'Alerts are off');
-    } catch (e) {
-      if (!quiet) _snack('Could not change alerts: $e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final recent = alerts.where((a) => now - _i(a['atMs']) < 86400000).length;
-    final pages = <Widget>[
-      SignalsPage(
-        signals: signals,
-        status: status,
-        error: error,
-        settings: settings,
-        picked: picked,
-        onPick: (n) => setState(() => picked = n),
-        alertsOn: settings.alertsOn,
-        onToggleAlerts: () => _setAlerts(!settings.alertsOn),
-        onEditPlan: () => setState(() => tab = 4),
-      ),
-      PicksPage(doc: picksDoc),
-      AlertsPage(alerts: alerts, alertsOn: settings.alertsOn, onToggleAlerts: (v) => _setAlerts(v)),
-      CheckTradePage(signals: signals ?? const [], settings: settings),
-      SettingsPage(settings: settings, onToggleAlerts: (v) => _setAlerts(v)),
-    ];
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(gradient: kBgGradient),
-        child: SafeArea(
-          bottom: false,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 380),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, anim) => FadeTransition(
-              opacity: anim,
-              child: SlideTransition(
-                position: Tween<Offset>(begin: const Offset(0, 0.025), end: Offset.zero).animate(anim),
-                child: child,
-              ),
-            ),
-            child: KeyedSubtree(key: ValueKey<int>(tab), child: pages[tab]),
-          ),
-        ),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (i) {
-          HapticFeedback.selectionClick();
-          setState(() => tab = i);
-        },
-        destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.show_chart_rounded),
-            selectedIcon: Icon(Icons.insights_rounded),
-            label: 'Signals',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.trending_up),
-            selectedIcon: Icon(Icons.trending_up_rounded),
-            label: 'Picks',
-          ),
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: recent > 0,
-              label: Text('$recent'),
-              child: const Icon(Icons.notifications_none_rounded),
-            ),
-            selectedIcon: const Icon(Icons.notifications_rounded),
-            label: 'Alerts',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.calculate_outlined),
-            selectedIcon: Icon(Icons.calculate_rounded),
-            label: 'My trade',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.tune_rounded),
-            selectedIcon: Icon(Icons.tune_rounded),
-            label: 'Settings',
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ================================================================ reusable pieces
-class FadeSlideIn extends StatefulWidget {
-  const FadeSlideIn({super.key, required this.child, this.index = 0, this.dy = 18});
-  final Widget child;
-  final int index;
-  final double dy;
-
-  @override
-  State<FadeSlideIn> createState() => _FadeSlideInState();
-}
-
-class _FadeSlideInState extends State<FadeSlideIn> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 560));
-  late final Animation<double> _a = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
-  Timer? _t;
-
-  @override
-  void initState() {
-    super.initState();
-    _t = Timer(Duration(milliseconds: 70 * widget.index), () {
-      if (mounted) _c.forward();
     });
   }
 
   @override
   void dispose() {
-    _t?.cancel();
-    _c.dispose();
+    _msgSub?.cancel();
+    app.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-        animation: _a,
-        builder: (context, child) => Opacity(
-          opacity: _a.value,
-          child: Transform.translate(offset: Offset(0, widget.dy * (1 - _a.value)), child: child),
+  void snack(String t) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+  }
+
+  void openAsset(String n) {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(PageRouteBuilder<void>(
+      transitionDuration: const Duration(milliseconds: 280),
+      pageBuilder: (_, __, ___) => AssetPage(app: app, symbol: n),
+      transitionsBuilder: (_, a, __, child) => FadeTransition(
+        opacity: a,
+        child: SlideTransition(
+          position: Tween(begin: const Offset(0.06, 0), end: Offset.zero)
+              .animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+          child: child,
         ),
-        child: widget.child,
+      ),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final recent = app.alerts.where((a) => now - _i(a['atMs']) < 86400000).length;
+        Future<void> toggle(bool v) async {
+          final m = await app.setAlerts(v);
+          if (m != null) snack(m);
+        }
+
+        return Scaffold(
+          body: IndexedStack(index: tab, children: [
+            MarketsPage(app: app, onOpen: openAsset),
+            PicksPage(app: app),
+            AlertsPage(app: app, onToggle: toggle, onOpen: openAsset),
+            ToolsPage(app: app),
+          ]),
+          bottomNavigationBar: Container(
+            decoration: const BoxDecoration(border: Border(top: BorderSide(color: kLine))),
+            child: NavigationBar(
+              selectedIndex: tab,
+              onDestinationSelected: (i) {
+                HapticFeedback.selectionClick();
+                setState(() => tab = i);
+              },
+              destinations: [
+                const NavigationDestination(
+                    icon: Icon(Icons.candlestick_chart_outlined),
+                    selectedIcon: Icon(Icons.candlestick_chart),
+                    label: 'Markets'),
+                const NavigationDestination(
+                    icon: Icon(Icons.auto_graph_outlined), selectedIcon: Icon(Icons.auto_graph), label: 'Picks'),
+                NavigationDestination(
+                  icon: Badge(
+                      isLabelVisible: recent > 0,
+                      label: Text('$recent'),
+                      child: const Icon(Icons.notifications_none_rounded)),
+                  selectedIcon: const Icon(Icons.notifications_rounded),
+                  label: 'Alerts',
+                ),
+                const NavigationDestination(
+                    icon: Icon(Icons.calculate_outlined), selectedIcon: Icon(Icons.calculate), label: 'Tools'),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ================================================================ building blocks
+class AppLogo extends StatelessWidget {
+  const AppLogo({super.key, this.size = 30});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(size * 0.28),
+          gradient: const LinearGradient(colors: [Color(0xFF3B82F6), Color(0xFF6366F1)]),
+        ),
+        child: Icon(Icons.trending_up_rounded, color: Colors.white, size: size * 0.62),
       );
 }
 
-class PulseDot extends StatefulWidget {
-  const PulseDot({super.key, required this.color});
+class Panel extends StatelessWidget {
+  const Panel({super.key, required this.child, this.padding = const EdgeInsets.all(16), this.title, this.trailing});
+  final Widget child;
+  final EdgeInsets padding;
+  final String? title;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: padding,
+        decoration: BoxDecoration(
+          color: kPanel,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kLine),
+        ),
+        child: title == null
+            ? child
+            : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Row(children: [
+                  Expanded(child: SectionLabel(title!)),
+                  if (trailing != null) trailing!,
+                ]),
+                const SizedBox(height: 12),
+                child,
+              ]),
+      );
+}
+
+class SectionLabel extends StatelessWidget {
+  const SectionLabel(this.text, {super.key});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(text.toUpperCase(),
+      style: const TextStyle(color: kMuted, fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.6));
+}
+
+class CoinAvatar extends StatelessWidget {
+  const CoinAvatar(this.symbol, {super.key, this.size = 36});
+  final String symbol;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: coinColors[symbol] ?? const Color(0xFF334155)),
+        child: Text(symbol.length > 4 ? symbol.substring(0, 4) : symbol,
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: size * 0.28)),
+      );
+}
+
+class SignalBadge extends StatelessWidget {
+  const SignalBadge(this.action, {super.key, this.large = false});
+  final String action;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = action == 'BUY' ? kUp : action == 'SELL' ? kDown : kMuted;
+    final icon = action == 'BUY' ? '▲ ' : action == 'SELL' ? '▼ ' : '';
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: large ? 10 : 8, vertical: large ? 5 : 3),
+      decoration: BoxDecoration(
+        color: action == 'WAIT' ? kPanel2 : c.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text('$icon$action',
+          style: TextStyle(color: c, fontWeight: FontWeight.w800, fontSize: large ? 12.5 : 11, letterSpacing: 0.5)),
+    );
+  }
+}
+
+class ChangeChip extends StatelessWidget {
+  const ChangeChip(this.value, {super.key, this.solid = false});
+  final double? value;
+  final bool solid;
+
+  @override
+  Widget build(BuildContext context) {
+    if (value == null) return const SizedBox.shrink();
+    final c = value! >= 0 ? kUp : kDown;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+          color: solid ? c : c.withValues(alpha: 0.13), borderRadius: BorderRadius.circular(6)),
+      child: Text(pct(value!), style: mono(12, color: solid ? Colors.white : c, w: FontWeight.w700)),
+    );
+  }
+}
+
+class StrengthMeter extends StatelessWidget {
+  const StrengthMeter(this.conf, this.color, {super.key});
+  final int conf;
   final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final lit = (conf / 5).round();
+    return Row(
+      children: List.generate(
+        20,
+        (i) => Expanded(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0.0, end: i < lit ? 1.0 : 0.0),
+            duration: Duration(milliseconds: 300 + i * 25),
+            builder: (_, v, __) => Container(
+              height: 8,
+              margin: const EdgeInsets.symmetric(horizontal: 1.5),
+              decoration: BoxDecoration(
+                color: Color.lerp(kLine, color, v),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class KV extends StatelessWidget {
+  const KV(this.k, this.v, {super.key, this.color = kText});
+  final String k, v;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: const BoxDecoration(border: Border(top: BorderSide(color: kLine))),
+        child: Row(children: [
+          Expanded(child: Text(k, style: const TextStyle(color: kMuted, fontSize: 13))),
+          Text(v, style: mono(13, color: color)),
+        ]),
+      );
+}
+
+class LevelBox extends StatelessWidget {
+  const LevelBox(this.label, this.value, this.accent, {super.key, this.sub, this.subColor = kMuted});
+  final String label, value;
+  final String? sub;
+  final Color accent, subColor;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: kPanel2,
+          borderRadius: BorderRadius.circular(10),
+          border: Border(left: BorderSide(color: accent, width: 3)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label.toUpperCase(),
+              style: const TextStyle(color: kMuted, fontSize: 10.5, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+          const SizedBox(height: 3),
+          Text(value, style: mono(16, w: FontWeight.w700)),
+          if (sub != null) Text(sub!, style: mono(11, color: subColor, w: FontWeight.w500)),
+        ]),
+      );
+}
+
+// ================================================================ charts
+class Sparkline extends StatelessWidget {
+  const Sparkline(this.values, {super.key, this.width = 72, this.height = 28});
+  final List<double> values;
+  final double width, height;
+
+  @override
+  Widget build(BuildContext context) =>
+      SizedBox(width: width, height: height, child: CustomPaint(painter: _SparkPainter(values)));
+}
+
+class _SparkPainter extends CustomPainter {
+  _SparkPainter(this.v);
+  final List<double> v;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (v.length < 2) return;
+    final mn = v.reduce(math.min), mx = v.reduce(math.max), k = (mx - mn) == 0 ? 1.0 : mx - mn;
+    final color = v.last >= v.first ? kUp : kDown;
+    final path = Path();
+    for (var i = 0; i < v.length; i++) {
+      final x = i / (v.length - 1) * size.width, y = size.height - 2 - (v[i] - mn) / k * (size.height - 4);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final fill = Path.from(path)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(
+        fill,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [color.withValues(alpha: 0.22), color.withValues(alpha: 0)],
+          ).createShader(Offset.zero & size));
+    canvas.drawPath(
+        path,
+        Paint()
+          ..color = color
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke
+          ..strokeJoin = StrokeJoin.round);
+  }
+
+  @override
+  bool shouldRepaint(_SparkPainter old) => old.v != v;
+}
+
+List<double?> emaOf(List<double> v, int n) {
+  final out = <double?>[];
+  final k = 2 / (n + 1);
+  double? p;
+  for (var i = 0; i < v.length; i++) {
+    if (i < n - 1) {
+      out.add(null);
+      continue;
+    }
+    p = p == null ? v.sublist(0, n).reduce((a, b) => a + b) / n : v[i] * k + p * (1 - k);
+    out.add(p);
+  }
+  return out;
+}
+
+class CandleChart extends StatefulWidget {
+  const CandleChart({super.key, required this.candles, this.signal, this.daily = false});
+  final List<Candle> candles;
+  final Signal? signal;
+  final bool daily;
+
+  @override
+  State<CandleChart> createState() => _CandleChartState();
+}
+
+class _CandleChartState extends State<CandleChart> {
+  int? hover;
+  static const axisW = 62.0;
+
+  void _touch(Offset p, double w) {
+    final cw = w - axisW, n = widget.candles.length;
+    if (n == 0) return;
+    setState(() => hover = p.dx < cw ? (p.dx / (cw / n)).floor().clamp(0, n - 1) : null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.candles;
+    final h = hover != null && hover! < c.length ? c[hover!] : null;
+    return LayoutBuilder(builder: (context, box) {
+      return Stack(children: [
+        GestureDetector(
+          onHorizontalDragStart: (d) => _touch(d.localPosition, box.maxWidth),
+          onHorizontalDragUpdate: (d) => _touch(d.localPosition, box.maxWidth),
+          onHorizontalDragEnd: (_) => setState(() => hover = null),
+          onTapDown: (d) => _touch(d.localPosition, box.maxWidth),
+          onTapUp: (_) => Future.delayed(const Duration(seconds: 2), () {
+            if (mounted) setState(() => hover = null);
+          }),
+          child: CustomPaint(
+            size: Size(box.maxWidth, box.maxHeight),
+            painter: _CandlePainter(c, widget.signal, hover, widget.daily),
+          ),
+        ),
+        if (h != null)
+          Positioned(
+            left: 4,
+            top: 2,
+            child: Text(
+              'O ${fp(h.o)}  H ${fp(h.h)}  L ${fp(h.l)}  C ${fp(h.c)}',
+              style: mono(10.5, color: kMuted, w: FontWeight.w500),
+            ),
+          ),
+      ]);
+    });
+  }
+}
+
+class _CandlePainter extends CustomPainter {
+  _CandlePainter(this.c, this.s, this.hover, this.daily);
+  final List<Candle> c;
+  final Signal? s;
+  final int? hover;
+  final bool daily;
+
+  void _text(Canvas cv, String t, Offset o, {Color color = kDim, double size = 10, FontWeight w = FontWeight.w500}) {
+    final tp = TextPainter(
+      text: TextSpan(text: t, style: TextStyle(color: color, fontSize: size, fontWeight: w, fontFeatures: tabular)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(cv, o.translate(0, -tp.height / 2));
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (c.isEmpty) {
+      _text(canvas, 'Loading chart…', const Offset(8, 20), color: kMuted, size: 13);
+      return;
+    }
+    const axisW = _CandleChartState.axisW, top = 16.0, bottom = 20.0;
+    final cw = size.width - axisW, ch = size.height - top - bottom;
+    final showLv = s != null && !s!.isWait && !daily;
+    var lo = c.map((e) => e.l).reduce(math.min), hi = c.map((e) => e.h).reduce(math.max);
+    if (showLv) {
+      lo = [lo, s!.stop, s!.tp1].reduce(math.min);
+      hi = [hi, s!.stop, s!.tp1].reduce(math.max);
+    }
+    final pad = (hi - lo) * 0.06;
+    lo -= pad;
+    hi += pad;
+    if (hi == lo) hi = lo + 1;
+    double y(double v) => top + (hi - v) / (hi - lo) * ch;
+    final n = c.length, step = cw / n, bw = math.max(1.0, step * 0.62);
+    final grid = Paint()..color = const Color(0xFF1A2030);
+    for (var i = 0; i <= 4; i++) {
+      final v = lo + (hi - lo) * i / 4, yy = y(v);
+      canvas.drawLine(Offset(0, yy), Offset(cw, yy), grid);
+      _text(canvas, fp(v), Offset(cw + 6, yy));
+    }
+    final every = (n / 4).ceil();
+    for (var i = 0; i < n; i += every) {
+      final d = DateTime.fromMillisecondsSinceEpoch(c[i].t);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      final lab = daily ? '${months[d.month - 1]} ${d.day}' : '${two(d.hour)}:${two(d.minute)}';
+      _text(canvas, lab, Offset(math.min(i * step, cw - 34), size.height - 8));
+    }
+    for (var i = 0; i < n; i++) {
+      final k = c[i], x = i * step + step / 2, up = k.c >= k.o;
+      final p = Paint()..color = up ? kUp : kDown;
+      canvas.drawLine(Offset(x, y(k.h)), Offset(x, y(k.l)), p..strokeWidth = 1);
+      final t = y(math.max(k.o, k.c)), b = y(math.min(k.o, k.c));
+      canvas.drawRect(Rect.fromLTWH(x - bw / 2, t, bw, math.max(1.0, b - t)), p);
+    }
+    final closes = c.map((e) => e.c).toList();
+    for (final e in [[21, kEma21], [50, kEma50]]) {
+      final ema = emaOf(closes, e[0] as int);
+      final path = Path();
+      var started = false;
+      for (var i = 0; i < ema.length; i++) {
+        final v = ema[i];
+        if (v == null) continue;
+        final pt = Offset(i * step + step / 2, y(v));
+        if (started) {
+          path.lineTo(pt.dx, pt.dy);
+        } else {
+          path.moveTo(pt.dx, pt.dy);
+        }
+        started = true;
+      }
+      canvas.drawPath(
+          path,
+          Paint()
+            ..color = e[1] as Color
+            ..strokeWidth = 1.2
+            ..style = PaintingStyle.stroke);
+    }
+    void level(double v, Color col, String tag, {bool dashed = true}) {
+      final yy = y(v);
+      final p = Paint()
+        ..color = col
+        ..strokeWidth = 1;
+      if (dashed) {
+        for (var x = 0.0; x < cw; x += 9) {
+          canvas.drawLine(Offset(x, yy), Offset(math.min(x + 5, cw), yy), p);
+        }
+      } else {
+        canvas.drawLine(Offset(0, yy), Offset(cw, yy), p);
+      }
+      canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(cw + 1, yy - 9, axisW - 1, 18), const Radius.circular(3)),
+          Paint()..color = col);
+      _text(canvas, fp(v), Offset(cw + 5, yy), color: Colors.white, w: FontWeight.w700);
+      if (tag.isNotEmpty) {
+        final tp = TextPainter(
+          text: TextSpan(
+              text: tag, style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w800)),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final w = tp.width + 10;
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(Rect.fromLTWH(cw - w - 4, yy - 9, w, 18), const Radius.circular(3)),
+            Paint()..color = col);
+        tp.paint(canvas, Offset(cw - w + 1, yy - tp.height / 2));
+      }
+    }
+
+    if (showLv) {
+      level(s!.price, kAccent, 'ENTRY');
+      level(s!.tp1, kUp, 'TP1');
+      level(s!.stop, kDown, 'SL');
+    }
+    final last = c.last;
+    level(last.c, last.c >= last.o ? kUp : kDown, '', dashed: false);
+    if (hover != null && hover! < n) {
+      final x = hover! * step + step / 2;
+      final p = Paint()
+        ..color = Colors.white.withValues(alpha: 0.3)
+        ..strokeWidth = 1;
+      for (var yy = top; yy < top + ch; yy += 6) {
+        canvas.drawLine(Offset(x, yy), Offset(x, yy + 3), p);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CandlePainter old) => true;
+}
+
+// ================================================================ markets
+class MarketsPage extends StatelessWidget {
+  const MarketsPage({super.key, required this.app, required this.onOpen});
+  final AppState app;
+  final void Function(String) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = app.order.isEmpty ? null : app.signals[app.order.first];
+    final active = app.order.where((n) => !app.signals[n]!.isWait).length;
+    return SafeArea(
+      bottom: false,
+      child: CustomScrollView(slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Row(children: [
+              const AppLogo(size: 30),
+              const SizedBox(width: 10),
+              const Text(appName, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: -0.3)),
+              const Spacer(),
+              StatusPill(app: app),
+            ]),
+          ),
+        ),
+        if (!app.loaded)
+          const SliverFillRemaining(child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+        else if (app.error != null)
+          SliverFillRemaining(
+              child: Center(child: Text('Could not load signals.\n${app.error}',
+                  textAlign: TextAlign.center, style: const TextStyle(color: kMuted))))
+        else if (app.order.isEmpty)
+          const SliverFillRemaining(
+              child: Center(child: Text('Waiting for the first signals…', style: TextStyle(color: kMuted))))
+        else ...[
+          if (app.stale)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Notice('Signals have not updated for over 3 hours. Prices are still live.'),
+              ),
+            ),
+          SliverToBoxAdapter(child: TickerTape(app: app, onOpen: onOpen)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              child: Row(children: [
+                _Stat('Assets', '${app.order.length}'),
+                _Stat('Active signals', '$active'),
+                _Stat('Next update', '', countdown: app.nextRunMs),
+              ]),
+            ),
+          ),
+          if (top != null && !top.isWait)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                child: TopSignalCard(app: app, s: top, onTap: () => onOpen(top.name)),
+              ),
+            ),
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 20, 16, 6),
+              child: Row(children: [
+                Expanded(flex: 5, child: _Head('Asset')),
+                Expanded(flex: 3, child: _Head('48h')),
+                Expanded(flex: 4, child: _Head('Price', right: true)),
+                Expanded(flex: 3, child: _Head('Signal', right: true)),
+              ]),
+            ),
+          ),
+          SliverList.builder(
+            itemCount: app.order.length,
+            itemBuilder: (_, i) => MarketRow(app: app, symbol: app.order[i], onTap: () => onOpen(app.order[i])),
+          ),
+          const SliverToBoxAdapter(child: Disclaimer()),
+        ],
+      ]),
+    );
+  }
+}
+
+class _Head extends StatelessWidget {
+  const _Head(this.t, {this.right = false});
+  final String t;
+  final bool right;
+
+  @override
+  Widget build(BuildContext context) => Text(t.toUpperCase(),
+      textAlign: right ? TextAlign.right : TextAlign.left,
+      style: const TextStyle(color: kDim, fontSize: 10.5, fontWeight: FontWeight.w700, letterSpacing: 0.6));
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat(this.label, this.value, {this.countdown});
+  final String label, value;
+  final int? countdown;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: Container(
+          margin: const EdgeInsets.only(right: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+              color: kPanel, borderRadius: BorderRadius.circular(10), border: Border.all(color: kLine)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: const TextStyle(color: kMuted, fontSize: 11)),
+            const SizedBox(height: 2),
+            countdown != null ? Countdown(targetMs: countdown!) : Text(value, style: mono(17, w: FontWeight.w700)),
+          ]),
+        ),
+      );
+}
+
+class StatusPill extends StatelessWidget {
+  const StatusPill({super.key, required this.app});
+  final AppState app;
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = app.liveOk && !app.stale;
+    final c = app.stale ? kWarn : ok ? kUp : kMuted;
+    final label = app.stale ? 'Delayed' : app.liveOk ? 'Live' : 'Hourly';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(color: c.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        PulseDot(color: c, pulse: ok),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(color: c, fontSize: 12, fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
+}
+
+class PulseDot extends StatefulWidget {
+  const PulseDot({super.key, required this.color, this.pulse = true});
+  final Color color;
+  final bool pulse;
 
   @override
   State<PulseDot> createState() => _PulseDotState();
 }
 
 class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1700))..repeat();
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 18,
-        height: 18,
-        child: AnimatedBuilder(
-          animation: _c,
-          builder: (context, _) {
-            final v = _c.value;
-            return Stack(alignment: Alignment.center, children: [
-              Container(
-                width: 8 + 10 * v,
-                height: 8 + 10 * v,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color.withValues(alpha: 0.5 * (1 - v))),
-              ),
-              Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color)),
-            ]);
-          },
-        ),
-      );
-}
-
-class GlassCard extends StatelessWidget {
-  const GlassCard({super.key, required this.child, this.padding = const EdgeInsets.all(18), this.color});
-  final Widget child;
-  final EdgeInsets padding;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [(color ?? kSurface2).withValues(alpha: 0.85), kSurface.withValues(alpha: 0.9)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: kBorder),
-        ),
-        child: child,
-      );
-}
-
-class SectionTitle extends StatelessWidget {
-  const SectionTitle(this.text, {super.key, this.trailing});
-  final String text;
-  final String? trailing;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Row(children: [
-          Text(text, style: const TextStyle(color: kText, fontSize: 17, fontWeight: FontWeight.w800)),
-          const Spacer(),
-          if (trailing != null) Text(trailing!, style: const TextStyle(color: kMuted, fontSize: 13)),
-        ]),
-      );
-}
-
-class GradientButton extends StatelessWidget {
-  const GradientButton({super.key, required this.label, required this.onTap, this.icon});
-  final String label;
-  final VoidCallback onTap;
-  final IconData? icon;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: kGradient,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: kAccent.withValues(alpha: 0.35), blurRadius: 18, offset: const Offset(0, 8))],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: () {
-              HapticFeedback.lightImpact();
-              onTap();
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                if (icon != null) ...[Icon(icon, color: Colors.white, size: 20), const SizedBox(width: 8)],
-                Text(label, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-              ]),
-            ),
-          ),
-        ),
-      );
-}
-
-class EmptyView extends StatelessWidget {
-  const EmptyView({super.key, required this.icon, required this.title, required this.text});
-  final IconData icon;
-  final String title, text;
-
-  @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: FadeSlideIn(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: 84,
-                height: 84,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: kSurface2, border: Border.all(color: kBorder)),
-                child: Icon(icon, color: kAccent, size: 38),
-              ),
-              const SizedBox(height: 18),
-              Text(title, style: const TextStyle(color: kText, fontSize: 19, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 8),
-              Text(text, textAlign: TextAlign.center, style: const TextStyle(color: kMuted, height: 1.4)),
-            ]),
-          ),
-        ),
-      );
-}
-
-class _SlideGradient extends GradientTransform {
-  const _SlideGradient(this.p);
-  final double p;
-
-  @override
-  Matrix4 transform(Rect bounds, {TextDirection? textDirection}) =>
-      Matrix4.translationValues(bounds.width * (2 * p - 1), 0, 0);
-}
-
-class Shimmer extends StatefulWidget {
-  const Shimmer({super.key, required this.child});
-  final Widget child;
-
-  @override
-  State<Shimmer> createState() => _ShimmerState();
-}
-
-class _ShimmerState extends State<Shimmer> with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat();
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))
+    ..repeat();
 
   @override
   void dispose() {
@@ -789,146 +1123,23 @@ class _ShimmerState extends State<Shimmer> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: _c,
-        child: widget.child,
-        builder: (context, child) => ShaderMask(
-          blendMode: BlendMode.srcATop,
-          shaderCallback: (rect) => LinearGradient(
-            colors: const [kSurface2, Color(0xFF2A3560), kSurface2],
-            stops: const [0.3, 0.5, 0.7],
-            transform: _SlideGradient(_c.value),
-          ).createShader(rect),
-          child: child,
-        ),
-      );
-}
-
-class LoadingView extends StatelessWidget {
-  const LoadingView({super.key});
-
-  Widget _box(double h, {double? w}) => Container(
-        height: h,
-        width: w,
-        margin: const EdgeInsets.only(bottom: 14),
-        decoration: BoxDecoration(color: kSurface2, borderRadius: BorderRadius.circular(20)),
-      );
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-        child: Shimmer(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _box(44, w: 220),
-            _box(64),
-            _box(330),
-            _box(110),
-          ]),
-        ),
-      );
-}
-
-class ConfidenceRing extends StatelessWidget {
-  const ConfidenceRing({super.key, required this.value, required this.color, this.size = 88});
-  final double value, size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
-        tween: Tween<double>(begin: 0, end: value),
-        duration: const Duration(milliseconds: 1200),
-        curve: Curves.easeOutCubic,
-        builder: (context, v, _) => SizedBox(
-          width: size,
-          height: size,
-          child: CustomPaint(
-            painter: _RingPainter(v, color),
-            child: Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Text('${(v * 100).round()}%',
-                    style: const TextStyle(color: kText, fontSize: 21, fontWeight: FontWeight.w800)),
-                const Text('sure', style: TextStyle(color: kMuted, fontSize: 11)),
-              ]),
-            ),
+        builder: (_, __) => Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: widget.color,
+            boxShadow: widget.pulse
+                ? [BoxShadow(color: widget.color.withValues(alpha: 0.6 * (1 - _c.value)), spreadRadius: 6 * _c.value)]
+                : null,
           ),
         ),
       );
 }
 
-class _RingPainter extends CustomPainter {
-  _RingPainter(this.v, this.color);
-  final double v;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
-    final r = size.width / 2 - 6;
-    final rect = Rect.fromCircle(center: c, radius: r);
-    canvas.drawCircle(
-      c,
-      r,
-      Paint()
-        ..color = kBorder
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 8,
-    );
-    if (v <= 0) return;
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      2 * math.pi * v,
-      false,
-      Paint()
-        ..shader = SweepGradient(
-          colors: [color.withValues(alpha: 0.35), color],
-          transform: const GradientRotation(-math.pi / 2),
-        ).createShader(rect)
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeWidth = 8,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_RingPainter old) => old.v != v || old.color != color;
-}
-
-class CoinAvatar extends StatelessWidget {
-  const CoinAvatar(this.name, {super.key, this.size = 34});
-  final String name;
-  final double size;
-
-  static const _colors = [
-    [Color(0xFFF7931A), Color(0xFFFFB547)],
-    [Color(0xFF627EEA), Color(0xFF8FA4FF)],
-    [Color(0xFF14F195), Color(0xFF9945FF)],
-    [Color(0xFF23292F), Color(0xFF5A6772)],
-    [Color(0xFFF3BA2F), Color(0xFFFFD86B)],
-    [Color(0xFF0033AD), Color(0xFF3A6BFF)],
-    [Color(0xFFC2A633), Color(0xFFE8D27A)],
-    [Color(0xFFE84142), Color(0xFFFF7A7B)],
-    [Color(0xFF2A5ADA), Color(0xFF5C86FF)],
-    [Color(0xFFE6007A), Color(0xFFFF5CAD)],
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final i = name.codeUnits.fold<int>(0, (a, b) => a + b) % _colors.length;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: _colors[i])),
-      alignment: Alignment.center,
-      child: Text(
-        name.length > 3 ? name.substring(0, 3) : name,
-        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: size * 0.3),
-      ),
-    );
-  }
-}
-
 class Countdown extends StatefulWidget {
-  const Countdown({super.key, required this.status});
-  final Map<String, dynamic>? status;
+  const Countdown({super.key, required this.targetMs});
+  final int targetMs;
 
   @override
   State<Countdown> createState() => _CountdownState();
@@ -940,9 +1151,7 @@ class _CountdownState extends State<Countdown> {
   @override
   void initState() {
     super.initState();
-    _t = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
+    _t = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
   }
 
   @override
@@ -953,1056 +1162,710 @@ class _CountdownState extends State<Countdown> {
 
   @override
   Widget build(BuildContext context) {
+    var t = widget.targetMs;
     final now = DateTime.now().millisecondsSinceEpoch;
-    var target = _i(widget.status?['nextRunMs']);
-    if (target < now) target = (now ~/ 3600000 + 1) * 3600000 + 5 * 60000;
-    final secs = ((target - now) / 1000).floor();
-    final frac = (1 - secs / 3600).clamp(0.0, 1.0).toDouble();
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: kBg.withValues(alpha: 0.55), borderRadius: BorderRadius.circular(16)),
-      child: Column(children: [
-        Row(children: [
-          const Icon(Icons.schedule_rounded, color: kMuted, size: 18),
-          const SizedBox(width: 8),
-          const Text('Next signal update', style: TextStyle(color: kMuted)),
-          const Spacer(),
-          Text('${two(secs ~/ 60)}:${two(secs % 60)}',
-              style: const TextStyle(
-                  color: kText, fontSize: 20, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
-        ]),
-        const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: TweenAnimationBuilder<double>(
-            tween: Tween<double>(begin: frac, end: frac),
-            duration: const Duration(milliseconds: 900),
-            builder: (context, v, _) => LinearProgressIndicator(
-              value: v,
-              minHeight: 6,
-              backgroundColor: kBorder,
-              valueColor: const AlwaysStoppedAnimation<Color>(kAccent),
-            ),
-          ),
-        ),
-      ]),
-    );
+    if (t <= now) t = (now ~/ 3600000 + 1) * 3600000 + 300000;
+    final s = (t - now) ~/ 1000;
+    return Text('${two(s ~/ 60)}:${two(s % 60)}', style: mono(17, w: FontWeight.w700));
   }
 }
 
-// ================================================================ signals page
-class SignalsPage extends StatelessWidget {
-  const SignalsPage({
-    super.key,
-    required this.signals,
-    required this.status,
-    required this.error,
-    required this.settings,
-    required this.picked,
-    required this.onPick,
-    required this.alertsOn,
-    required this.onToggleAlerts,
-    required this.onEditPlan,
-  });
-
-  final List<Signal>? signals;
-  final Map<String, dynamic>? status;
-  final String? error;
-  final SettingsModel settings;
-  final String? picked;
-  final ValueChanged<String> onPick;
-  final bool alertsOn;
-  final VoidCallback onToggleAlerts;
-  final VoidCallback onEditPlan;
-
-  @override
-  Widget build(BuildContext context) {
-    final header = _Header(status: status, alertsOn: alertsOn, onToggleAlerts: onToggleAlerts);
-    if (error != null) {
-      return Column(children: [
-        header,
-        const Expanded(
-          child: EmptyView(
-            icon: Icons.cloud_off_rounded,
-            title: "Can't load signals",
-            text: 'Check your internet connection and try again.',
-          ),
-        ),
-      ]);
-    }
-    final list = signals;
-    if (list == null) return Column(children: [header, const Expanded(child: LoadingView())]);
-    if (list.isEmpty) {
-      return Column(children: [
-        header,
-        const Expanded(
-          child: EmptyView(
-            icon: Icons.hourglass_top_rounded,
-            title: 'First signals are on the way',
-            text: 'The bot checks the market every hour. Signals appear here automatically.',
-          ),
-        ),
-      ]);
-    }
-    final current = list.firstWhere((s) => s.name == picked, orElse: () => list.first);
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 28),
-      children: [
-        header,
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            FadeSlideIn(index: 1, child: _PlanBar(settings: settings, onEdit: onEditPlan)),
-            const SizedBox(height: 14),
-            FadeSlideIn(
-              index: 2,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 450),
-                switchInCurve: Curves.easeOutCubic,
-                transitionBuilder: (child, a) => FadeTransition(
-                  opacity: a,
-                  child: ScaleTransition(scale: Tween<double>(begin: 0.96, end: 1).animate(a), child: child),
-                ),
-                child: SignalHero(
-                  key: ValueKey('${current.name}-${current.dir}-${current.price}'),
-                  s: current,
-                  settings: settings,
-                  status: status,
-                ),
-              ),
-            ),
-            const SizedBox(height: 22),
-            FadeSlideIn(index: 3, child: SectionTitle('All coins', trailing: '${list.length} tracked')),
-            const SizedBox(height: 12),
-          ]),
-        ),
-        FadeSlideIn(
-          index: 4,
-          child: SizedBox(
-            height: 124,
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              scrollDirection: Axis.horizontal,
-              itemCount: list.length,
-              separatorBuilder: (context, i) => const SizedBox(width: 10),
-              itemBuilder: (context, i) => CoinTile(
-                s: list[i],
-                selected: list[i].name == current.name,
-                onTap: () => onPick(list[i].name),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 20),
-        const FadeSlideIn(
-          index: 5,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 24),
-            child: Text(
-              'Signals come from past price patterns and can be wrong. Practise with no real money first. Not financial advice.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: kMuted, fontSize: 12, height: 1.4),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  const _Header({required this.status, required this.alertsOn, required this.onToggleAlerts});
-  final Map<String, dynamic>? status;
-  final bool alertsOn;
-  final VoidCallback onToggleAlerts;
-
-  @override
-  Widget build(BuildContext context) {
-    final last = _i(status?['lastRunMs']);
-    final fresh = last > 0 && DateTime.now().millisecondsSinceEpoch - last < 3 * 3600000;
-    final t = DateTime.fromMillisecondsSinceEpoch(last);
-    final text = last == 0
-        ? 'Waiting for the bot'
-        : fresh
-            ? 'Live · updated ${two(t.hour)}:${two(t.minute)}'
-            : 'Paused · last update ${timeAgo(last)}';
-    return FadeSlideIn(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 14, 10, 14),
-        child: Row(children: [
-          const AppLogo(size: 42),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text(appName, style: TextStyle(color: kText, fontSize: 20, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 2),
-              Row(children: [
-                PulseDot(color: fresh ? kUp : kWait),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(text,
-                      overflow: TextOverflow.ellipsis, style: const TextStyle(color: kMuted, fontSize: 13)),
-                ),
-              ]),
-            ]),
-          ),
-          IconButton(
-            onPressed: onToggleAlerts,
-            tooltip: alertsOn ? 'Alerts on' : 'Alerts off',
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              transitionBuilder: (c, a) => RotationTransition(
-                turns: Tween<double>(begin: -0.1, end: 0).animate(a),
-                child: ScaleTransition(scale: a, child: c),
-              ),
-              child: Icon(
-                alertsOn ? Icons.notifications_active_rounded : Icons.notifications_off_outlined,
-                key: ValueKey<bool>(alertsOn),
-                color: alertsOn ? kAccent : kMuted,
-              ),
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
-}
-
-class _PlanBar extends StatelessWidget {
-  const _PlanBar({required this.settings, required this.onEdit});
-  final SettingsModel settings;
-  final VoidCallback onEdit;
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onEdit,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: kSurface.withValues(alpha: 0.8),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: kBorder),
-          ),
-          child: Row(children: [
-            const Icon(Icons.account_balance_wallet_rounded, color: kAccent, size: 22),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text.rich(TextSpan(children: [
-                const TextSpan(text: 'My money  ', style: TextStyle(color: kMuted)),
-                TextSpan(
-                    text: money(settings.balance),
-                    style: const TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 16)),
-              ])),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(gradient: kGradient, borderRadius: BorderRadius.circular(20)),
-              child: Text(styleNames[settings.style]!,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
-            ),
-            const SizedBox(width: 4),
-            const Icon(Icons.chevron_right_rounded, color: kMuted),
-          ]),
-        ),
-      );
-}
-
-class SignalHero extends StatelessWidget {
-  const SignalHero({super.key, required this.s, required this.settings, required this.status});
-  final Signal s;
-  final SettingsModel settings;
-  final Map<String, dynamic>? status;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = s.color;
-    final strong = s.stars >= 4 && !s.isWait;
-    final p = settings.plan(s.price, s.stop, s.tp1, s.tp2);
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
-        gradient: LinearGradient(
-          colors: [color.withValues(alpha: 0.22), kSurface.withValues(alpha: 0.95), kSurface],
-          stops: const [0, 0.55, 1],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        border: Border.all(color: color.withValues(alpha: 0.55), width: 1.4),
-        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.18), blurRadius: 32, offset: const Offset(0, 12))],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(20)),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(s.icon, color: color, size: 16),
-                  const SizedBox(width: 5),
-                  Text(
-                    s.isWait ? 'NO CLEAR TRADE' : '${strong ? 'STRONG ' : ''}${s.verb.toUpperCase()} SIGNAL',
-                    style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 11, letterSpacing: 0.6),
-                  ),
-                ]),
-              ),
-              const SizedBox(height: 12),
-              Row(children: [
-                CoinAvatar(s.name, size: 38),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    s.isWait ? 'Wait on ${s.name}' : '${s.verb} ${s.name}',
-                    style: const TextStyle(color: kText, fontSize: 28, fontWeight: FontWeight.w800, height: 1.1),
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 8),
-              Text('★' * s.stars + '☆' * (5 - s.stars),
-                  style: const TextStyle(color: kStar, fontSize: 18, letterSpacing: 2)),
-            ]),
-          ),
-          ConfidenceRing(value: s.conf / 100, color: color),
-        ]),
-        const SizedBox(height: 18),
-        if (s.isWait)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 4),
-            child: Text(
-              "The signals disagree, so there's no good trade here right now. Not trading is also a smart move. Tap another coin below.",
-              style: TextStyle(color: kMuted, height: 1.45),
-            ),
-          )
-        else ...[
-          FadeSlideIn(
-            index: 3,
-            child: _StepRow(
-              icon: Icons.bolt_rounded,
-              color: kAccent,
-              title: '${s.verb} at about ${fp(s.price)}',
-              sub: 'Put in ${money(p.spend)}  ·  max ${money(p.max)}',
-            ),
-          ),
-          FadeSlideIn(
-            index: 4,
-            child: _StepRow(
-              icon: Icons.flag_rounded,
-              color: kUp,
-              title: 'Take profit at ${fp(s.tp1)}',
-              sub: 'You make about +${money(p.win1)}  ·  bonus target ${fp(s.tp2)} (+${money(p.win2)})',
-            ),
-          ),
-          FadeSlideIn(
-            index: 5,
-            child: _StepRow(
-              icon: Icons.shield_rounded,
-              color: kDown,
-              title: 'Exit if it reaches ${fp(s.stop)}',
-              sub: 'Most you can lose: −${money(p.loss)}',
-            ),
-          ),
-          if (!s.isUp)
-            const _Note("Selling a coin you don't own needs a futures account. With a normal account, just don't buy it now."),
-          if (p.tooSmall) const _Note("This amount is below your exchange's minimum. Skip it or add money.", color: kDown),
-        ],
-        const SizedBox(height: 14),
-        Countdown(status: status),
-        _WhyTile(checks: s.checks),
-      ]),
-    );
-  }
-}
-
-class _StepRow extends StatelessWidget {
-  const _StepRow({required this.icon, required this.color, required this.title, required this.sub});
-  final IconData icon;
-  final Color color;
-  final String title, sub;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: kBg.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kBorder.withValues(alpha: 0.7)),
-        ),
-        child: Row(children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(12)),
-            child: Icon(icon, color: color, size: 21),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(color: kText, fontSize: 16, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(sub, style: const TextStyle(color: kMuted, fontSize: 13, height: 1.3)),
-            ]),
-          ),
-        ]),
-      );
-}
-
-class _Note extends StatelessWidget {
-  const _Note(this.text, {this.color = kMuted});
+class Notice extends StatelessWidget {
+  const Notice(this.text, {super.key, this.color = kWarn});
   final String text;
   final Color color;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 2, bottom: 4),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(Icons.info_outline_rounded, size: 16, color: color),
-          const SizedBox(width: 6),
-          Expanded(child: Text(text, style: TextStyle(color: color, fontSize: 13, height: 1.35))),
-        ]),
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Text(text, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w500)),
       );
 }
 
-class _WhyTile extends StatelessWidget {
-  const _WhyTile({required this.checks});
-  final List<Map<String, dynamic>> checks;
+class TickerTape extends StatefulWidget {
+  const TickerTape({super.key, required this.app, required this.onOpen});
+  final AppState app;
+  final void Function(String) onOpen;
 
   @override
-  Widget build(BuildContext context) => Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-          childrenPadding: const EdgeInsets.only(left: 4, right: 4, bottom: 4),
-          iconColor: kAccent,
-          collapsedIconColor: kMuted,
-          title: const Text('Why this signal?', style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
-          children: [
-            for (final c in checks)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5),
-                child: Row(children: [
-                  Icon(
-                    _d(c['score']) > 0
-                        ? Icons.arrow_upward_rounded
-                        : _d(c['score']) < 0
-                            ? Icons.arrow_downward_rounded
-                            : Icons.remove_rounded,
-                    size: 18,
-                    color: _d(c['score']) > 0
-                        ? kUp
-                        : _d(c['score']) < 0
-                            ? kDown
-                            : kMuted,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text('${c['note'] ?? ''}', style: const TextStyle(color: kText, fontSize: 14))),
-                ]),
-              ),
-          ],
-        ),
-      );
+  State<TickerTape> createState() => _TickerTapeState();
 }
 
-class CoinTile extends StatelessWidget {
-  const CoinTile({super.key, required this.s, required this.selected, required this.onTap});
-  final Signal s;
-  final bool selected;
-  final VoidCallback onTap;
+class _TickerTapeState extends State<TickerTape> {
+  final _sc = ScrollController();
+  Timer? _t;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap();
-        },
-        child: AnimatedScale(
-          scale: selected ? 1 : 0.95,
-          duration: const Duration(milliseconds: 260),
-          curve: Curves.easeOutBack,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOutCubic,
-            width: 116,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: selected ? kSurface2 : kSurface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: selected ? s.color : kBorder, width: selected ? 1.6 : 1),
-              boxShadow: selected
-                  ? [BoxShadow(color: s.color.withValues(alpha: 0.28), blurRadius: 18, offset: const Offset(0, 6))]
-                  : const [],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(children: [
-                  CoinAvatar(s.name, size: 30),
-                  const Spacer(),
-                  Icon(s.icon, color: s.color, size: 22),
-                ]),
-                Text(s.name, style: const TextStyle(color: kText, fontSize: 16, fontWeight: FontWeight.w800)),
-                Text(
-                  s.isWait ? 'Wait' : '${s.verb} · ${s.conf}%',
-                  style: TextStyle(color: s.color, fontSize: 12, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-}
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(milliseconds: 40), (_) {
+      if (!_sc.hasClients) return;
+      final max = _sc.position.maxScrollExtent;
+      if (max <= 0) return;
+      final next = _sc.offset + 0.8;
+      _sc.jumpTo(next >= max / 2 ? next - max / 2 : next);
+    });
+  }
 
-// ================================================================ alerts page
-class AlertsPage extends StatelessWidget {
-  const AlertsPage({super.key, required this.alerts, required this.alertsOn, required this.onToggleAlerts});
-  final List<Map<String, dynamic>> alerts;
-  final bool alertsOn;
-  final ValueChanged<bool> onToggleAlerts;
+  @override
+  void dispose() {
+    _t?.cancel();
+    _sc.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final toggle = FadeSlideIn(
-      child: GlassCard(
-        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
-        child: SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          value: alertsOn,
-          onChanged: onToggleAlerts,
-          secondary: Icon(alertsOn ? Icons.notifications_active_rounded : Icons.notifications_off_outlined,
-              color: alertsOn ? kAccent : kMuted),
-          title: const Text('Push alerts', style: TextStyle(color: kText, fontWeight: FontWeight.w700)),
-          subtitle: const Text('Strong signals (4★+), max 3 per hour', style: TextStyle(color: kMuted, fontSize: 13)),
-        ),
-      ),
-    );
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 14),
-          child: Text('Alerts', style: TextStyle(color: kText, fontSize: 26, fontWeight: FontWeight.w800)),
-        ),
-        toggle,
-        const SizedBox(height: 18),
-        if (alerts.isEmpty)
-          const SizedBox(
-            height: 320,
-            child: EmptyView(
-              icon: Icons.notifications_none_rounded,
-              title: 'No alerts yet',
-              text: 'When a coin becomes a strong signal, it shows up here and on your phone.',
+    final items = [...widget.app.order, ...widget.app.order];
+    return Container(
+      height: 34,
+      decoration: const BoxDecoration(
+          color: kPanel, border: Border.symmetric(horizontal: BorderSide(color: kLine))),
+      child: ListView.builder(
+        controller: _sc,
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: items.length,
+        itemBuilder: (_, i) {
+          final n = items[i], c = widget.app.chgOf(n);
+          return GestureDetector(
+            onTap: () => widget.onOpen(n),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(children: [
+                Text(n, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                const SizedBox(width: 6),
+                Text(fp(widget.app.priceOf(n) ?? 0), style: mono(12, w: FontWeight.w500)),
+                const SizedBox(width: 6),
+                if (c != null) Text(pct(c), style: mono(12, color: c >= 0 ? kUp : kDown, w: FontWeight.w600)),
+              ]),
             ),
-          )
-        else
-          for (var i = 0; i < alerts.length; i++)
-            FadeSlideIn(index: math.min(i + 1, 10), child: _AlertTile(a: alerts[i])),
-      ],
+          );
+        },
+      ),
     );
   }
 }
 
-class _AlertTile extends StatelessWidget {
-  const _AlertTile({required this.a});
-  final Map<String, dynamic> a;
+class TopSignalCard extends StatelessWidget {
+  const TopSignalCard({super.key, required this.app, required this.s, required this.onTap});
+  final AppState app;
+  final Signal s;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final up = a['dir'] == 'UP';
-    final color = up ? kUp : kDown;
-    final stars = _i(a['stars']);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: kSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: kBorder),
-      ),
-      child: Row(children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(14)),
-          child: Icon(up ? Icons.trending_up_rounded : Icons.trending_down_rounded, color: color),
+    final p = app.plan(s.price, s.stop, s.tp1, s.tp2);
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: s.color.withValues(alpha: 0.45)),
+          gradient: LinearGradient(
+            colors: [s.color.withValues(alpha: 0.14), kPanel],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('${up ? 'BUY' : 'SELL'} ${a['name'] ?? ''}',
-                style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 16)),
-            const SizedBox(height: 2),
-            Text('at ${fp(_d(a['price']))}  ·  ${'★' * stars}', style: const TextStyle(color: kMuted, fontSize: 13)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            const SectionLabel('Top signal'),
+            const Spacer(),
+            SignalBadge(s.action, large: true),
           ]),
+          const SizedBox(height: 12),
+          Row(children: [
+            CoinAvatar(s.name, size: 40),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${s.isUp ? 'Long' : 'Short'} ${s.name}/USDT',
+                    style: TextStyle(color: s.color, fontSize: 19, fontWeight: FontWeight.w800)),
+                Text('Strength ${s.conf}/100 · ${strengthLabel(s.conf)}',
+                    style: mono(12.5, color: kMuted, w: FontWeight.w500)),
+              ]),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: kMuted),
+          ]),
+          const SizedBox(height: 12),
+          StrengthMeter(s.conf, s.color),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: _MiniLevel('Entry', fp(s.price), kText)),
+            Expanded(child: _MiniLevel('Target', fp(s.tp1), kUp)),
+            Expanded(child: _MiniLevel('Stop', fp(s.stop), kDown)),
+            Expanded(child: _MiniLevel('R:R', '1:${p.ratio.toStringAsFixed(1)}', kText)),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+class _MiniLevel extends StatelessWidget {
+  const _MiniLevel(this.k, this.v, this.c);
+  final String k, v;
+  final Color c;
+
+  @override
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(k, style: const TextStyle(color: kMuted, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(v, style: mono(13.5, color: c, w: FontWeight.w700)),
+      ]);
+}
+
+class MarketRow extends StatelessWidget {
+  const MarketRow({super.key, required this.app, required this.symbol, required this.onTap});
+  final AppState app;
+  final String symbol;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = app.signals[symbol]!, c = app.chgOf(symbol);
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        decoration: const BoxDecoration(border: Border(top: BorderSide(color: kLine))),
+        child: Row(children: [
+          Expanded(
+            flex: 5,
+            child: Row(children: [
+              CoinAvatar(symbol, size: 32),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(symbol, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5)),
+                  Text(coinNames[symbol] ?? '',
+                      overflow: TextOverflow.ellipsis, style: const TextStyle(color: kMuted, fontSize: 11.5)),
+                ]),
+              ),
+            ]),
+          ),
+          Expanded(flex: 3, child: Align(alignment: Alignment.centerLeft, child: Sparkline(app.sparkOf(symbol), width: 60))),
+          Expanded(
+            flex: 4,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              AnimatedPrice(app.priceOf(symbol) ?? 0, style: mono(14)),
+              if (c != null) Text(pct(c), style: mono(11.5, color: c >= 0 ? kUp : kDown)),
+            ]),
+          ),
+          Expanded(
+            flex: 3,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              SignalBadge(s.action),
+              if (!s.isWait) Text('${s.conf}/100', style: mono(11, color: kMuted, w: FontWeight.w500)),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Price text that briefly flashes green/red when it changes.
+class AnimatedPrice extends StatefulWidget {
+  const AnimatedPrice(this.value, {super.key, required this.style});
+  final double value;
+  final TextStyle style;
+
+  @override
+  State<AnimatedPrice> createState() => _AnimatedPriceState();
+}
+
+class _AnimatedPriceState extends State<AnimatedPrice> {
+  Color? flash;
+  Timer? _t;
+
+  @override
+  void didUpdateWidget(AnimatedPrice old) {
+    super.didUpdateWidget(old);
+    if (old.value != 0 && widget.value != old.value) {
+      flash = widget.value > old.value ? kUp : kDown;
+      _t?.cancel();
+      _t = Timer(const Duration(milliseconds: 700), () {
+        if (mounted) setState(() => flash = null);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedDefaultTextStyle(
+        duration: const Duration(milliseconds: 250),
+        style: widget.style.copyWith(color: flash ?? widget.style.color),
+        child: Text(fp(widget.value)),
+      );
+}
+
+class Disclaimer extends StatelessWidget {
+  const Disclaimer({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.fromLTRB(16, 18, 16, 28),
+        child: Text(
+          'Signals come from technical indicators on past prices. Signal strength shows how strongly the indicators '
+          'agree; it is not a probability of profit. Always use a stop loss, risk at most 1–2% per trade, and '
+          'paper-trade first. Not financial advice. Market data: Binance.',
+          style: TextStyle(color: kDim, fontSize: 11, height: 1.5),
         ),
-        Text(timeAgo(_i(a['atMs'])), style: const TextStyle(color: kMuted, fontSize: 12)),
+      );
+}
+
+// ================================================================ asset detail
+class AssetPage extends StatefulWidget {
+  const AssetPage({super.key, required this.app, required this.symbol});
+  final AppState app;
+  final String symbol;
+
+  @override
+  State<AssetPage> createState() => _AssetPageState();
+}
+
+class _AssetPageState extends State<AssetPage> {
+  String interval = '1h';
+  List<Candle> candles = [];
+  Timer? _refresh;
+  int _loadId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _refresh = Timer.periodic(const Duration(seconds: 60), (_) => _load());
+    widget.app.addListener(_onLive);
+  }
+
+  void _onLive() {
+    final p = widget.app.live[widget.symbol]?.price;
+    if (p != null && candles.isNotEmpty) {
+      final k = candles.last;
+      k.c = p;
+      k.h = math.max(k.h, p);
+      k.l = math.min(k.l, p);
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _load() async {
+    final id = ++_loadId;
+    try {
+      final r = await http
+          .get(Uri.parse('${binance}klines?symbol=${widget.symbol}USDT&interval=$interval&limit=80'))
+          .timeout(const Duration(seconds: 8));
+      if (r.statusCode != 200) throw Exception(r.statusCode);
+      final list = (jsonDecode(r.body) as List)
+          .map((x) => x as List)
+          .map((x) => Candle((x[0] as num).toInt(), double.parse(x[1] as String), double.parse(x[2] as String),
+              double.parse(x[3] as String), double.parse(x[4] as String)))
+          .toList();
+      if (mounted && id == _loadId) setState(() => candles = list);
+    } catch (_) {
+      final s = widget.app.signals[widget.symbol];
+      if (mounted && id == _loadId && candles.isEmpty && s != null) setState(() => candles = s.candles);
+    }
+  }
+
+  @override
+  void dispose() {
+    _refresh?.cancel();
+    widget.app.removeListener(_onLive);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = widget.app, n = widget.symbol, s = app.signals[n];
+    final t = app.live[n], price = app.priceOf(n) ?? 0, chg = app.chgOf(n);
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 0,
+        title: Row(children: [
+          CoinAvatar(n, size: 28),
+          const SizedBox(width: 10),
+          Text('$n', style: const TextStyle(fontWeight: FontWeight.w800)),
+          const Text('/USDT', style: TextStyle(color: kMuted, fontWeight: FontWeight.w600)),
+        ]),
+        actions: [Padding(padding: const EdgeInsets.only(right: 12), child: StatusPill(app: app))],
+      ),
+      body: s == null
+          ? const Center(child: Text('No data', style: TextStyle(color: kMuted)))
+          : ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 24), children: [
+              Text(coinNames[n] ?? n, style: const TextStyle(color: kMuted, fontSize: 13)),
+              const SizedBox(height: 2),
+              Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                AnimatedPrice(price, style: mono(30, w: FontWeight.w700)),
+                const SizedBox(width: 10),
+                Padding(padding: const EdgeInsets.only(bottom: 6), child: ChangeChip(chg)),
+              ]),
+              const SizedBox(height: 12),
+              Row(children: [
+                _HeadStat('24h High', fp(t?.high ?? s.hi24)),
+                _HeadStat('24h Low', fp(t?.low ?? s.lo24)),
+                _HeadStat('24h Vol', '\$${bigNum(t?.quoteVol ?? s.vol24)}'),
+                _HeadStat('RSI 14', s.rsi == null ? '—' : s.rsi!.toStringAsFixed(1)),
+              ]),
+              const SizedBox(height: 14),
+              Panel(
+                padding: const EdgeInsets.fromLTRB(12, 12, 8, 10),
+                child: Column(children: [
+                  Row(children: [
+                    const SizedBox(width: 4),
+                    const SectionLabel('Chart'),
+                    const Spacer(),
+                    for (final iv in ['15m', '1h', '4h', '1d'])
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: ChoiceChip(
+                          label: Text(iv == '15m' ? '15m' : iv.toUpperCase()),
+                          selected: interval == iv,
+                          showCheckmark: false,
+                          visualDensity: VisualDensity.compact,
+                          labelStyle: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w700, color: interval == iv ? kText : kMuted),
+                          side: const BorderSide(color: kLine),
+                          backgroundColor: kPanel2,
+                          selectedColor: kLine2,
+                          onSelected: (_) {
+                            setState(() {
+                              interval = iv;
+                              candles = [];
+                            });
+                            _load();
+                          },
+                        ),
+                      ),
+                  ]),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 280, child: CandleChart(candles: candles, signal: s, daily: interval == '1d')),
+                  const SizedBox(height: 8),
+                  const Wrap(spacing: 14, runSpacing: 4, children: [
+                    _Legend(kEma21, 'EMA 21'),
+                    _Legend(kEma50, 'EMA 50'),
+                    _Legend(kAccent, 'Entry'),
+                    _Legend(kUp, 'Target'),
+                    _Legend(kDown, 'Stop'),
+                  ]),
+                ]),
+              ),
+              SignalPanel(app: app, s: s),
+              TechnicalPanel(s: s),
+              const Disclaimer(),
+            ]),
+    );
+  }
+}
+
+class _HeadStat extends StatelessWidget {
+  const _HeadStat(this.k, this.v);
+  final String k, v;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(k.toUpperCase(),
+              style: const TextStyle(color: kMuted, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.4)),
+          const SizedBox(height: 2),
+          Text(v, style: mono(12.5)),
+        ]),
+      );
+}
+
+class _Legend extends StatelessWidget {
+  const _Legend(this.c, this.t);
+  final Color c;
+  final String t;
+
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(width: 10, height: 2, color: c),
+        const SizedBox(width: 5),
+        Text(t, style: const TextStyle(color: kMuted, fontSize: 11)),
+      ]);
+}
+
+class SignalPanel extends StatelessWidget {
+  const SignalPanel({super.key, required this.app, required this.s});
+  final AppState app;
+  final Signal s;
+
+  @override
+  Widget build(BuildContext context) {
+    final head = Row(children: [
+      const Expanded(child: SectionLabel('AI signal · 1H')),
+      SignalBadge(s.action, large: true),
+    ]);
+    if (s.isWait) {
+      return Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          head,
+          const SizedBox(height: 12),
+          Text('No trade on ${s.name}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          const Text('Indicators disagree. Staying out is a valid position.',
+              style: TextStyle(color: kMuted, fontSize: 13)),
+          const SizedBox(height: 14),
+          StrengthMeter(s.conf, kMuted),
+          const SizedBox(height: 6),
+          Text('Signal strength ${s.conf}/100 · ${strengthLabel(s.conf)}', style: mono(12, color: kMuted)),
+          const SizedBox(height: 8),
+          _NextUpdate(app: app),
+        ]),
+      );
+    }
+    final p = app.plan(s.price, s.stop, s.tp1, s.tp2);
+    final now = app.priceOf(s.name) ?? s.price, moved = (now / s.price - 1) * 100 * (s.isUp ? 1 : -1);
+    String d(double x) => pct((x / s.price - 1) * 100);
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        head,
+        const SizedBox(height: 12),
+        Text('${s.isUp ? 'Long' : 'Short'} ${s.name}/USDT',
+            style: TextStyle(color: s.color, fontSize: 22, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 2),
+        Text.rich(TextSpan(style: mono(12.5, color: kMuted, w: FontWeight.w500), children: [
+          TextSpan(text: 'Signal at ${fp(s.price)} · now '),
+          TextSpan(text: '${fp(now)} (${pct(moved)})', style: TextStyle(color: moved >= 0 ? kUp : kDown)),
+        ])),
+        const SizedBox(height: 14),
+        StrengthMeter(s.conf, s.color),
+        const SizedBox(height: 6),
+        Row(children: [
+          const Expanded(child: Text('Signal strength', style: TextStyle(color: kMuted, fontSize: 12))),
+          Text('${s.conf}/100 · ${strengthLabel(s.conf)}', style: mono(12, color: kMuted)),
+        ]),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(child: LevelBox('Entry', fp(s.price), kAccent, sub: 'Market')),
+          const SizedBox(width: 8),
+          Expanded(child: LevelBox('Stop loss', fp(s.stop), kDown, sub: d(s.stop), subColor: kDown)),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: LevelBox('Target 1', fp(s.tp1), kUp, sub: d(s.tp1), subColor: kUp)),
+          const SizedBox(width: 8),
+          Expanded(child: LevelBox('Target 2', fp(s.tp2), kUp, sub: d(s.tp2), subColor: kUp)),
+        ]),
+        const SizedBox(height: 10),
+        KV('Risk / reward', '1 : ${p.ratio.toStringAsFixed(2)}'),
+        KV('Position size', '${money(p.spend)} · ${p.units.toStringAsPrecision(4)} ${s.name}'),
+        KV('Max loss at stop', '−${money(p.loss)}', color: kDown),
+        KV('Profit at target 1 / 2', '+${money(p.win1)} / +${money(p.win2)}', color: kUp),
+        if (!s.isUp)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text('Short positions need a futures or margin account. On a spot account, treat this as "avoid buying".',
+                style: TextStyle(color: kMuted, fontSize: 12, height: 1.4)),
+          ),
+        if (p.tooSmall)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text('Position is below your exchange minimum order.', style: TextStyle(color: kDown, fontSize: 12)),
+          ),
+        const SizedBox(height: 10),
+        _NextUpdate(app: app),
       ]),
     );
   }
 }
 
-// ================================================================ my trade page
-class CheckTradePage extends StatefulWidget {
-  const CheckTradePage({super.key, required this.signals, required this.settings});
-  final List<Signal> signals;
-  final SettingsModel settings;
-
-  @override
-  State<CheckTradePage> createState() => _CheckTradePageState();
-}
-
-class _CheckTradePageState extends State<CheckTradePage> {
-  final _sym = TextEditingController();
-  final _in = TextEditingController();
-  final _tp = TextEditingController();
-  final _sl = TextEditingController();
-  int _side = 1;
-  Widget? _result;
-  int _resultKey = 0;
-
-  @override
-  void dispose() {
-    for (final c in [_sym, _in, _tp, _sl]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  Widget _num(TextEditingController c, String label, IconData icon) => TextField(
-        controller: c,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        style: const TextStyle(color: kText, fontWeight: FontWeight.w600),
-        decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon, color: kMuted, size: 20)),
-      );
-
-  void _check() {
-    FocusScope.of(context).unfocus();
-    final e = double.tryParse(_in.text) ?? 0;
-    final t = double.tryParse(_tp.text) ?? 0;
-    final s = double.tryParse(_sl.text) ?? 0;
-    Widget r;
-    if (e <= 0 || t <= 0 || s <= 0) {
-      r = const _Note('Please fill in all three prices.', color: kWait);
-    } else if ((s - e) * _side >= 0 || (t - e) * _side <= 0) {
-      r = _Note(
-        _side > 0
-            ? 'For "up": the exit price must be below your entry, and the profit price above it.'
-            : 'For "down": the exit price must be above your entry, and the profit price below it.',
-        color: kWait,
-      );
-    } else {
-      final p = widget.settings.plan(e, s, t, t);
-      final grade = p.ratio >= 2
-          ? ('Good trade', kUp)
-          : p.ratio >= 1.5
-              ? ('OK trade', kWait)
-              : ('Weak trade', kDown);
-      final sym = _sym.text.toUpperCase().replaceAll(RegExp(r'USDT?$'), '').trim();
-      final match = widget.signals.where((x) => x.name == sym).toList();
-      String? agree;
-      Color agreeColor = kMuted;
-      if (match.isNotEmpty) {
-        final x = match.first;
-        if (x.isWait) {
-          agree = 'The signals see no clear direction.';
-          agreeColor = kWait;
-        } else if (x.isUp == (_side > 0)) {
-          agree = 'The signals agree with you.';
-          agreeColor = kUp;
-        } else {
-          agree = 'The signals point the other way. Be careful.';
-          agreeColor = kDown;
-        }
-      }
-      r = GlassCard(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(color: grade.$2.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(20)),
-              child: Text(grade.$1, style: TextStyle(color: grade.$2, fontWeight: FontWeight.w800)),
-            ),
-            const Spacer(),
-            Text('Reward : risk  ${p.ratio.toStringAsFixed(2)} : 1',
-                style: const TextStyle(color: kMuted, fontSize: 13)),
-          ]),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0, end: (p.ratio / 3).clamp(0.0, 1.0).toDouble()),
-              duration: const Duration(milliseconds: 900),
-              curve: Curves.easeOutCubic,
-              builder: (context, v, _) => LinearProgressIndicator(
-                value: v,
-                minHeight: 8,
-                backgroundColor: kBorder,
-                valueColor: AlwaysStoppedAnimation<Color>(grade.$2),
-              ),
-            ),
-          ),
-          if (agree != null) ...[
-            const SizedBox(height: 12),
-            Row(children: [
-              Icon(agreeColor == kUp ? Icons.check_circle_rounded : Icons.error_outline_rounded,
-                  color: agreeColor, size: 18),
-              const SizedBox(width: 6),
-              Expanded(child: Text(agree, style: TextStyle(color: agreeColor, fontWeight: FontWeight.w600))),
-            ]),
-          ],
-          const SizedBox(height: 14),
-          Row(children: [
-            _Stat('Put in', money(p.spend), kText),
-            const SizedBox(width: 8),
-            _Stat('If right', '+${money(p.win1)}', kUp),
-            const SizedBox(width: 8),
-            _Stat('If wrong', '−${money(p.loss)}', kDown),
-          ]),
-          if (p.tooSmall) const _Note("Below your exchange's minimum order.", color: kDown),
-        ]),
-      );
-    }
-    setState(() {
-      _result = r;
-      _resultKey++;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 4),
-          child: Text('Check my trade', style: TextStyle(color: kText, fontSize: 26, fontWeight: FontWeight.w800)),
-        ),
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 16),
-          child: Text('Have your own idea? See how much to put in and what you could win or lose.',
-              style: TextStyle(color: kMuted, height: 1.4)),
-        ),
-        FadeSlideIn(
-          child: GlassCard(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              TextField(
-                controller: _sym,
-                textCapitalization: TextCapitalization.characters,
-                style: const TextStyle(color: kText, fontWeight: FontWeight.w600),
-                decoration: const InputDecoration(
-                  labelText: 'Coin (e.g. BTC)',
-                  prefixIcon: Icon(Icons.currency_bitcoin_rounded, color: kMuted, size: 20),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 1, label: Text('Going up'), icon: Icon(Icons.trending_up_rounded)),
-                  ButtonSegment(value: -1, label: Text('Going down'), icon: Icon(Icons.trending_down_rounded)),
-                ],
-                selected: {_side},
-                showSelectedIcon: false,
-                onSelectionChanged: (s) => setState(() => _side = s.first),
-              ),
-              const SizedBox(height: 12),
-              _num(_in, "I'll get in at", Icons.login_rounded),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(child: _num(_tp, 'Take profit at', Icons.flag_rounded)),
-                const SizedBox(width: 10),
-                Expanded(child: _num(_sl, 'Exit if wrong at', Icons.shield_rounded)),
-              ]),
-              const SizedBox(height: 16),
-              GradientButton(label: 'Check it', icon: Icons.auto_awesome_rounded, onTap: _check),
-            ]),
-          ),
-        ),
-        const SizedBox(height: 16),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 420),
-          transitionBuilder: (c, a) => FadeTransition(
-            opacity: a,
-            child: SlideTransition(
-              position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(a),
-              child: c,
-            ),
-          ),
-          child: KeyedSubtree(key: ValueKey<int>(_resultKey), child: _result ?? const SizedBox.shrink()),
-        ),
-      ],
-    );
-  }
-}
-
-class _Stat extends StatelessWidget {
-  const _Stat(this.label, this.value, this.color);
-  final String label, value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Expanded(
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: kBg.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(14)),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: const TextStyle(color: kMuted, fontSize: 12)),
-            const SizedBox(height: 4),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(value, style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w800)),
-            ),
-          ]),
-        ),
-      );
-}
-
-// ================================================================ settings page
-class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.settings, required this.onToggleAlerts});
-  final SettingsModel settings;
-  final ValueChanged<bool> onToggleAlerts;
-
-  @override
-  State<SettingsPage> createState() => _SettingsPageState();
-}
-
-class _SettingsPageState extends State<SettingsPage> {
-  late final _bal = TextEditingController(text: widget.settings.balance.toStringAsFixed(0));
-  late final _fee = TextEditingController(text: widget.settings.fee.toString());
-  late final _min = TextEditingController(text: widget.settings.minOrder.toStringAsFixed(0));
-
-  @override
-  void dispose() {
-    _bal.dispose();
-    _fee.dispose();
-    _min.dispose();
-    super.dispose();
-  }
-
-  Widget _styleOption(String key) {
-    final on = widget.settings.style == key;
-    final icon = key == 'safe'
-        ? Icons.shield_moon_rounded
-        : key == 'normal'
-            ? Icons.balance_rounded
-            : Icons.local_fire_department_rounded;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          widget.settings.setStyle(key);
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
-          decoration: BoxDecoration(
-            gradient: on ? kGradient : null,
-            color: on ? null : kSurface2,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: on ? Colors.transparent : kBorder),
-            boxShadow: on ? [BoxShadow(color: kAccent.withValues(alpha: 0.35), blurRadius: 16)] : const [],
-          ),
-          child: Column(children: [
-            Icon(icon, color: on ? Colors.white : kMuted),
-            const SizedBox(height: 6),
-            Text(styleNames[key]!,
-                style: TextStyle(color: on ? Colors.white : kText, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 2),
-            Text(styleInfo[key]!.replaceAll(' per trade', ''),
-                style: TextStyle(color: on ? Colors.white70 : kMuted, fontSize: 11)),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final st = widget.settings;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 16),
-          child: Text('Settings', style: TextStyle(color: kText, fontSize: 26, fontWeight: FontWeight.w800)),
-        ),
-        FadeSlideIn(
-          index: 0,
-          child: GlassCard(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const Text('My trading money', style: TextStyle(color: kMuted)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _bal,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: const TextStyle(color: kText, fontSize: 24, fontWeight: FontWeight.w800),
-                decoration: const InputDecoration(prefixText: '\$ '),
-                onChanged: (v) {
-                  final x = double.tryParse(v);
-                  if (x != null) st.setBalance(x);
-                },
-              ),
-              const SizedBox(height: 16),
-              const Text('Trading style', style: TextStyle(color: kMuted)),
-              const SizedBox(height: 8),
-              Row(children: [
-                _styleOption('safe'),
-                const SizedBox(width: 8),
-                _styleOption('normal'),
-                const SizedBox(width: 8),
-                _styleOption('bold'),
-              ]),
-            ]),
-          ),
-        ),
-        const SizedBox(height: 14),
-        FadeSlideIn(
-          index: 1,
-          child: GlassCard(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _min,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(color: kText),
-                    decoration: const InputDecoration(labelText: 'Exchange minimum (\$)'),
-                    onChanged: (v) {
-                      final x = double.tryParse(v);
-                      if (x != null) st.setMin(x);
-                    },
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _fee,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(color: kText),
-                    decoration: const InputDecoration(labelText: 'Fee per trade (%)'),
-                    onChanged: (v) {
-                      final x = double.tryParse(v);
-                      if (x != null) st.setFee(x);
-                    },
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 6),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: st.alertsOn,
-                onChanged: widget.onToggleAlerts,
-                title: const Text('Push alerts', style: TextStyle(color: kText, fontWeight: FontWeight.w700)),
-                subtitle: const Text('Strong signals only', style: TextStyle(color: kMuted, fontSize: 13)),
-              ),
-            ]),
-          ),
-        ),
-        const SizedBox(height: 14),
-        const FadeSlideIn(
-          index: 2,
-          child: GlassCard(
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              AppLogo(size: 40),
-              SizedBox(width: 12),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(appName, style: TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 16)),
-                  SizedBox(height: 4),
-                  Text(
-                    'Checks 10 crypto coins every hour with 6 market indicators. It never trades for you. '
-                    'Signals come from past price patterns and can be wrong. Not financial advice.',
-                    style: TextStyle(color: kMuted, fontSize: 13, height: 1.4),
-                  ),
-                ]),
-              ),
-            ]),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ================================================================ 5-day picks page
-class PicksPage extends StatelessWidget {
-  const PicksPage({super.key, required this.doc});
-  final Map<String, dynamic>? doc;
-
-  @override
-  Widget build(BuildContext context) {
-    final d = doc;
-    final model = (d?['model'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
-    final picks = ((d?['picks'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-    final hasEdge = model['has_edge'] == true;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 4),
-          child: Text('5-day picks', style: TextStyle(color: kText, fontSize: 26, fontWeight: FontWeight.w800)),
-        ),
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 16),
-          child: Text('Stocks (S&P 500) + crypto · machine learning · updated daily 09:00 Doha',
-              style: TextStyle(color: kMuted, height: 1.4)),
-        ),
-        if (d == null)
-          const SizedBox(
-            height: 320,
-            child: EmptyView(
-              icon: Icons.trending_up_rounded,
-              title: 'First daily scan is on the way',
-              text: 'The model scans the market every day at 09:00 Doha time.',
-            ),
-          )
-        else ...[
-          if (!hasEdge) const FadeSlideIn(child: _EdgeWarning()),
-          if (picks.isEmpty)
-            const FadeSlideIn(
-              index: 1,
-              child: GlassCard(
-                child: Text('No trade today. Nothing passed the accuracy filters. Waiting is a position too.',
-                    style: TextStyle(color: kText, height: 1.4)),
-              ),
-            ),
-          for (var i = 0; i < picks.length; i++) FadeSlideIn(index: i + 1, child: _PickCard(p: picks[i])),
-          const SizedBox(height: 6),
-          FadeSlideIn(index: picks.length + 1, child: _ModelCard(m: model, generated: '${d['generatedAt'] ?? ''}')),
-        ],
-      ],
-    );
-  }
-}
-
-class _EdgeWarning extends StatelessWidget {
-  const _EdgeWarning();
+class _NextUpdate extends StatelessWidget {
+  const _NextUpdate({required this.app});
+  final AppState app;
 
   @override
   Widget build(BuildContext context) => Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: kWait.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: kWait.withValues(alpha: 0.6)),
-        ),
-        child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(Icons.warning_amber_rounded, color: kWait),
-          SizedBox(width: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(color: kPanel2, borderRadius: BorderRadius.circular(10)),
+        child: Row(children: [
+          const Expanded(child: Text('Next signal update', style: TextStyle(color: kMuted, fontSize: 12))),
+          Countdown(targetMs: app.nextRunMs),
+        ]),
+      );
+}
+
+class TechnicalPanel extends StatelessWidget {
+  const TechnicalPanel({super.key, required this.s});
+  final Signal s;
+
+  List<String> _row(Map<String, dynamic> c) {
+    switch (c['label']) {
+      case 'Trend':
+        return ['Trend (EMA 21/50)', s.ema21 == null ? '—' : '${fp(s.ema21!)} / ${fp(s.ema50 ?? 0)}'];
+      case 'Short trend':
+        return ['Momentum (EMA 9/21)', '—'];
+      case 'Strength':
+        return ['RSI (14)', s.rsi?.toStringAsFixed(1) ?? '—'];
+      case 'Speed':
+        return ['MACD histogram', s.macd?.toStringAsPrecision(3) ?? '—'];
+      case 'Range':
+        return ['Bollinger %B', s.bbPos?.toStringAsFixed(2) ?? '—'];
+      case 'Volume':
+        return ['Volume vs 50h avg', s.volRatio == null ? '—' : '${s.volRatio!.toStringAsFixed(2)}×'];
+      default:
+        return ['${c['label'] ?? ''}', '—'];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = s.checks.fold<double>(0, (a, c) => a + _d(c['score']).sign);
+    final pos = s.checks.isEmpty ? 0.5 : 0.5 + total / s.checks.length / 2;
+    return Panel(
+      title: 'Technical analysis',
+      child: Column(children: [
+        Row(children: [
+          const Text('Sell', style: TextStyle(color: kDown, fontSize: 12, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              "No edge today: the model did not beat simple guessing on its exam. Don't trade on these picks.",
-              style: TextStyle(color: kWait, fontWeight: FontWeight.w600, height: 1.4),
+            child: LayoutBuilder(
+              builder: (_, b) => SizedBox(
+                height: 14,
+                child: Stack(clipBehavior: Clip.none, children: [
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 4,
+                    child: Container(
+                      height: 6,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(3),
+                        gradient: const LinearGradient(colors: [kDown, kLine2, kUp]),
+                      ),
+                    ),
+                  ),
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOutCubic,
+                    left: (b.maxWidth * pos - 1.5).clamp(0.0, b.maxWidth - 3).toDouble(),
+                    top: 0,
+                    child: Container(
+                        width: 3,
+                        height: 14,
+                        decoration:
+                            BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2))),
+                  ),
+                ]),
+              ),
             ),
           ),
+          const SizedBox(width: 10),
+          const Text('Buy', style: TextStyle(color: kUp, fontSize: 12, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 10),
+        for (final c in s.checks)
+          Builder(builder: (_) {
+            final r = _row(c), sc = _d(c['score']);
+            final (label, col) = sc > 0 ? ('Bullish', kUp) : sc < 0 ? ('Bearish', kDown) : ('Neutral', kMuted);
+            return Tooltip(
+              message: '${c['note'] ?? ''}',
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: kLine))),
+                child: Row(children: [
+                  Expanded(flex: 5, child: Text(r[0], style: const TextStyle(fontSize: 13))),
+                  Expanded(flex: 4, child: Text(r[1], textAlign: TextAlign.right, style: mono(12.5, color: kMuted))),
+                  const SizedBox(width: 10),
+                  Container(
+                    width: 64,
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    decoration: BoxDecoration(
+                      color: sc == 0 ? kPanel2 : col.withValues(alpha: 0.13),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(label, style: TextStyle(color: col, fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+                ]),
+              ),
+            );
+          }),
+      ]),
+    );
+  }
+}
+
+// ================================================================ picks
+class PicksPage extends StatelessWidget {
+  const PicksPage({super.key, required this.app});
+  final AppState app;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = app.picks;
+    final m = (d?['model'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+    final picks = ((d?['picks'] as List?) ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    final acc = _d(m['confident_accuracy']) * 100, base = _d(m['baseline']) * 100, edge = acc - base;
+    return SafeArea(
+      bottom: false,
+      child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
+        const Text('5-day picks', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 2),
+        Text('S&P 500 + crypto · machine learning · ${d?['generatedAt'] ?? 'daily 09:00 Doha'}',
+            style: const TextStyle(color: kMuted, fontSize: 12.5)),
+        const SizedBox(height: 14),
+        if (d == null)
+          const Panel(child: Text('Waiting for the first daily scan…', style: TextStyle(color: kMuted)))
+        else ...[
+          Row(children: [
+            Expanded(child: _Kpi('Exam accuracy', '${acc.toStringAsFixed(1)}%')),
+            const SizedBox(width: 8),
+            Expanded(child: _Kpi('Baseline', '${base.toStringAsFixed(1)}%', color: kMuted)),
+            const SizedBox(width: 8),
+            Expanded(
+                child: _Kpi('Edge', '${edge >= 0 ? '+' : ''}${edge.toStringAsFixed(1)} pts',
+                    color: edge >= 2 ? kUp : kWarn)),
+          ]),
+          const SizedBox(height: 8),
+          Text('Model: ${m['name'] ?? '—'} · tested on data it never saw while learning',
+              style: const TextStyle(color: kMuted, fontSize: 12)),
+          const SizedBox(height: 12),
+          if (m['has_edge'] != true)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Notice('No edge today: the model did not beat simple guessing on its exam. Do not trade these picks.'),
+            ),
+          if (picks.isEmpty)
+            const Panel(child: Text('No trade today. No asset passed the accuracy filters.', style: TextStyle(color: kMuted))),
+          for (final p in picks) _PickCard(p: p),
+        ],
+        const Disclaimer(),
+      ]),
+    );
+  }
+}
+
+class _Kpi extends StatelessWidget {
+  const _Kpi(this.k, this.v, {this.color = kText});
+  final String k, v;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration:
+            BoxDecoration(color: kPanel, borderRadius: BorderRadius.circular(10), border: Border.all(color: kLine)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(k.toUpperCase(),
+              style: const TextStyle(color: kMuted, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.4)),
+          const SizedBox(height: 3),
+          Text(v, style: mono(17, color: color, w: FontWeight.w700)),
         ]),
       );
 }
@@ -2013,74 +1876,308 @@ class _PickCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final buy = p['signal'] == 'BUY';
-    final color = buy ? kUp : kDown;
+    final buy = p['signal'] == 'BUY', color = buy ? kUp : kDown;
     final plan = (p['plan'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
     final hours = (p['hours'] as Map?)?.cast<String, dynamic>();
-    final ticker = '${p['ticker'] ?? ''}';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        gradient: LinearGradient(
-          colors: [color.withValues(alpha: 0.18), kSurface],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
+    final ticker = '${p['ticker'] ?? ''}', prob = _d(p['probability']);
+    final entry = _d(plan['entry']);
+    String d(double x) => entry == 0 ? '' : pct((x / entry - 1) * 100);
+    return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          CoinAvatar(ticker.replaceAll('-USD', ''), size: 40),
-          const SizedBox(width: 12),
+          CoinAvatar(ticker.replaceAll('-USD', ''), size: 36),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('${buy ? 'BUY' : 'SELL'} $ticker',
-                  style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w800)),
-              Text('Past accuracy ${(_d(p['accuracy']) * 100).round()}% of ${_i(p['samples'])} signals',
-                  style: const TextStyle(color: kMuted, fontSize: 13)),
+              Text(ticker, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+              const Text('5-day outlook', style: TextStyle(color: kMuted, fontSize: 11.5)),
             ]),
           ),
-          ConfidenceRing(value: _d(p['probability']), color: color, size: 74),
+          SignalBadge(buy ? 'BUY' : 'SELL', large: true),
+        ]),
+        const SizedBox(height: 12),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0.0, end: prob),
+            duration: const Duration(milliseconds: 700),
+            curve: Curves.easeOutCubic,
+            builder: (_, v, __) => LinearProgressIndicator(
+                value: v, minHeight: 6, backgroundColor: kLine, valueColor: AlwaysStoppedAnimation(color)),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Row(children: [
+          Expanded(
+              child: Text('Model probability (${buy ? 'up' : 'down'})',
+                  style: const TextStyle(color: kMuted, fontSize: 12))),
+          Text('${(prob * 100).round()}%', style: mono(12, color: kMuted)),
         ]),
         const SizedBox(height: 12),
         Row(children: [
-          _Stat('Entry', fp(_d(plan['entry'])), kText),
+          Expanded(child: LevelBox('Entry', fp(entry), kAccent)),
           const SizedBox(width: 8),
-          _Stat('Stop', fp(_d(plan['stop'])), kDown),
+          Expanded(
+              child: LevelBox('Stop', fp(_d(plan['stop'])), kDown, sub: d(_d(plan['stop'])), subColor: kDown)),
           const SizedBox(width: 8),
-          _Stat('Target', fp(_d(plan['target'])), kUp),
+          Expanded(
+              child: LevelBox('Target', fp(_d(plan['target'])), kUp, sub: d(_d(plan['target'])), subColor: kUp)),
         ]),
-        if (hours != null) ...[
-          const SizedBox(height: 10),
-          Row(children: [
-            const Icon(Icons.schedule_rounded, size: 16, color: kMuted),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text('Best buy ${hours['buy_hour']} · best sell ${hours['sell_hour']} (Doha time)',
-                  style: const TextStyle(color: kMuted, fontSize: 13)),
-            ),
-          ]),
-        ],
+        const SizedBox(height: 8),
+        KV('Backtest hit rate', '${(_d(p['accuracy']) * 100).round()}% · ${_i(p['samples'])} signals'),
+        if (hours != null) KV('Best entry / exit (Doha)', '${hours['buy_hour']} / ${hours['sell_hour']}'),
       ]),
     );
   }
 }
 
-class _ModelCard extends StatelessWidget {
-  const _ModelCard({required this.m, required this.generated});
-  final Map<String, dynamic> m;
-  final String generated;
+// ================================================================ alerts
+class AlertsPage extends StatelessWidget {
+  const AlertsPage({super.key, required this.app, required this.onToggle, required this.onOpen});
+  final AppState app;
+  final Future<void> Function(bool) onToggle;
+  final void Function(String) onOpen;
 
   @override
-  Widget build(BuildContext context) => GlassCard(
-        child: Text(
-          'Model: ${m['name'] ?? '-'} · ${(_d(m['confident_accuracy']) * 100).round()}% right on its exam '
-          'vs ${(_d(m['baseline']) * 100).round()}% by guessing · $generated\n\n'
-          'Signals are probabilities, not guarantees. Use the stop-loss, risk max 1-2% per trade, '
-          'paper-trade first. Not financial advice.',
-          style: const TextStyle(color: kMuted, fontSize: 13, height: 1.4),
+  Widget build(BuildContext context) {
+    return SafeArea(
+      bottom: false,
+      child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
+        const Text('Alerts', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 14),
+        Panel(
+          child: Row(children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(color: kAccent.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.notifications_active_outlined, color: kAccent),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Push notifications', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                SizedBox(height: 2),
+                Text('Strong signals only (strength 55+), max 3 per hour',
+                    style: TextStyle(color: kMuted, fontSize: 12)),
+              ]),
+            ),
+            Switch(value: app.alertsOn, activeTrackColor: kAccent, onChanged: onToggle),
+          ]),
         ),
-      );
+        Panel(
+          title: 'History',
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+          child: app.alerts.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text('No alerts yet.', style: TextStyle(color: kMuted)),
+                )
+              : Column(children: [
+                  for (final a in app.alerts)
+                    InkWell(
+                      onTap: () => onOpen('${a['name']}'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        decoration: const BoxDecoration(border: Border(top: BorderSide(color: kLine))),
+                        child: Row(children: [
+                          CoinAvatar('${a['name']}', size: 32),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text('${a['dir'] == 'UP' ? 'BUY' : 'SELL'} ${a['name']}/USDT',
+                                  style: const TextStyle(fontWeight: FontWeight.w700)),
+                              Text(
+                                  'Entry ${fp(_d(a['price']))} · TP ${fp(_d(a['tp1']))} · SL ${fp(_d(a['stop']))}',
+                                  style: mono(11.5, color: kMuted, w: FontWeight.w500)),
+                            ]),
+                          ),
+                          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                            SignalBadge(a['dir'] == 'UP' ? 'BUY' : 'SELL'),
+                            const SizedBox(height: 3),
+                            Text(timeAgo(_i(a['atMs'])), style: const TextStyle(color: kMuted, fontSize: 11)),
+                          ]),
+                        ]),
+                      ),
+                    ),
+                ]),
+        ),
+      ]),
+    );
+  }
+}
+
+// ================================================================ tools
+class ToolsPage extends StatefulWidget {
+  const ToolsPage({super.key, required this.app});
+  final AppState app;
+
+  @override
+  State<ToolsPage> createState() => _ToolsPageState();
+}
+
+class _ToolsPageState extends State<ToolsPage> {
+  late final bal = TextEditingController(text: widget.app.balance.toStringAsFixed(0));
+  late final fee = TextEditingController(text: '${widget.app.fee}');
+  late final minO = TextEditingController(text: widget.app.minOrder.toStringAsFixed(0));
+  final sym = TextEditingController(), entry = TextEditingController(), tp = TextEditingController(),
+      sl = TextEditingController();
+  bool long = true;
+  Widget? result;
+
+  @override
+  void dispose() {
+    for (final c in [bal, fee, minO, sym, entry, tp, sl]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  double _v(TextEditingController c) => double.tryParse(c.text.replaceAll(',', '.')) ?? 0;
+
+  void _analyse() {
+    FocusScope.of(context).unfocus();
+    final e = _v(entry), t = _v(tp), s = _v(sl), sd = long ? 1 : -1;
+    if (e <= 0 || t <= 0 || s <= 0) {
+      setState(() => result = const Text('Enter entry, take-profit and stop-loss prices.', style: TextStyle(color: kDown)));
+      return;
+    }
+    if ((s - e) * sd >= 0 || (t - e) * sd <= 0) {
+      setState(() => result = Text(
+          long ? 'For a long: stop loss below entry, take profit above.' : 'For a short: stop loss above entry, take profit below.',
+          style: const TextStyle(color: kDown)));
+      return;
+    }
+    final app = widget.app, p = app.plan(e, s, t, t);
+    final key = sym.text.toUpperCase().replaceAll(RegExp(r'USDT?$'), '').trim(), m = app.signals[key];
+    final grade = p.ratio >= 2 ? ('Good setup', kUp) : p.ratio >= 1.5 ? ('Acceptable', kWarn) : ('Poor risk/reward', kDown);
+    setState(() => result = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: grade.$2.withValues(alpha: 0.13), borderRadius: BorderRadius.circular(6)),
+              child: Text(grade.$1, style: TextStyle(color: grade.$2, fontWeight: FontWeight.w800, fontSize: 12.5)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          KV('Risk / reward', '1 : ${p.ratio.toStringAsFixed(2)}'),
+          KV('Position size', money(p.spend)),
+          KV('Profit at target', '+${money(p.win1)}', color: kUp),
+          KV('Loss at stop', '−${money(p.loss)}', color: kDown),
+          if (m != null)
+            KV(
+              'AI signal',
+              m.isWait
+                  ? 'Neutral'
+                  : ((m.isUp && long) || (!m.isUp && !long))
+                      ? 'Agrees (${m.action} ${m.conf}/100)'
+                      : 'Disagrees (${m.action} ${m.conf}/100)',
+              color: m.isWait ? kMuted : ((m.isUp && long) || (!m.isUp && !long)) ? kUp : kDown,
+            ),
+        ]));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = widget.app;
+    InputDecoration dec(String l) => InputDecoration(labelText: l, isDense: true);
+    const numKb = TextInputType.numberWithOptions(decimal: true);
+    return SafeArea(
+      bottom: false,
+      child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
+        const Text('Tools', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 14),
+        Panel(
+          title: 'Account & risk',
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            TextField(
+              controller: bal,
+              keyboardType: numKb,
+              decoration: dec('Account balance (USD)'),
+              onChanged: (_) => app.setBalance(_v(bal)),
+            ),
+            const SizedBox(height: 12),
+            const Text('Risk per trade', style: TextStyle(color: kMuted, fontSize: 12)),
+            const SizedBox(height: 6),
+            SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: [
+                for (final k in riskProfiles.keys)
+                  ButtonSegment(
+                    value: k,
+                    label: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(riskNames[k]!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                      Text('${riskProfiles[k]![0]}%', style: mono(11, color: kMuted, w: FontWeight.w500)),
+                    ]),
+                  ),
+              ],
+              selected: {app.risk},
+              onSelectionChanged: (v) => app.setRisk(v.first),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: TextField(
+                    controller: minO,
+                    keyboardType: numKb,
+                    decoration: dec('Min. order (USD)'),
+                    onChanged: (_) => app.setMin(_v(minO))),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                    controller: fee,
+                    keyboardType: numKb,
+                    decoration: dec('Fee per side (%)'),
+                    onChanged: (_) => app.setFee(_v(fee))),
+              ),
+            ]),
+            const SizedBox(height: 10),
+            const Text(
+                'Position sizes on every signal use these settings, so a stop-loss hit never costs more than your chosen risk.',
+                style: TextStyle(color: kMuted, fontSize: 12, height: 1.4)),
+          ]),
+        ),
+        Panel(
+          title: 'Trade planner',
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Expanded(child: TextField(controller: sym, decoration: dec('Asset (e.g. BTC)'))),
+              const SizedBox(width: 10),
+              SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: true, label: Text('Long')),
+                  ButtonSegment(value: false, label: Text('Short')),
+                ],
+                selected: {long},
+                onSelectionChanged: (v) => setState(() => long = v.first),
+              ),
+            ]),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: TextField(controller: entry, keyboardType: numKb, decoration: dec('Entry'))),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(controller: tp, keyboardType: numKb, decoration: dec('Take profit'))),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(controller: sl, keyboardType: numKb, decoration: dec('Stop loss'))),
+            ]),
+            const SizedBox(height: 12),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: kAccent,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: _analyse,
+              child: const Text('Analyse trade', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            if (result != null) ...[const SizedBox(height: 12), result!],
+          ]),
+        ),
+        const Disclaimer(),
+      ]),
+    );
+  }
 }
