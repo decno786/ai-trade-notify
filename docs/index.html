@@ -448,7 +448,7 @@ function startLive(){
     if (n === sel){
       const px = $('aPx');
       if (prev && c !== prev){ px.classList.remove('flu','fld'); void px.offsetWidth; px.classList.add(c>prev?'flu':'fld'); setTimeout(()=>px.classList.remove('flu','fld'), 600) }
-      renderHeader();
+      renderHeader(); renderSignal();
       const k = candles.at(-1); if (k){ k.c = c; k.h = Math.max(k.h,c); k.l = Math.min(k.l,c); scheduleDraw() }
     }
   };
