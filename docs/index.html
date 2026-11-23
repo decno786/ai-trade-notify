@@ -174,6 +174,19 @@ input:focus,select:focus{border-color:var(--acc)}
 }
 @media (min-width:701px){.tab svg{display:none}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.mk{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--panel2);color:var(--mut);margin-left:6px}
+.livebadge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:var(--up);letter-spacing:.06em;margin-left:8px;text-transform:none}
+.livebadge i{width:7px;height:7px;border-radius:50%;background:var(--up);animation:ping 1.8s infinite}
+.livebadge.off{color:var(--mut)}.livebadge.off i{background:var(--dim);animation:none}
+.ctl{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.act{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding:14px 16px;border-radius:12px}
+.act.BUY{background:var(--upbg);border:1px solid rgba(22,199,132,.4)}.act.SELL{background:var(--dnbg);border:1px solid rgba(234,57,67,.4)}.act.WAIT{background:var(--panel2);border:1px solid var(--line)}
+.act .big{font-size:22px;font-weight:800;letter-spacing:.02em}.act.BUY .big{color:var(--up)}.act.SELL .big{color:var(--dn)}
+.act .timer{text-align:right;flex:none}.act .timer .l{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}.act .timer b{font-family:var(--mono);font-size:24px;font-weight:700}
+.vbar{height:4px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:8px}.vbar i{display:block;height:100%;width:0;background:var(--acc);transition:width 1s linear}
+.tvbox{height:430px;border-radius:10px;overflow:hidden}
+@media (max-width:600px){.tvbox{height:380px}}
+.tape{min-height:46px}
 </style>
 </head>
 <body>
@@ -188,7 +201,7 @@ input:focus,select:focus{border-color:var(--acc)}
     </nav>
     <div class="status"><span class="led" id="led"></span><span id="liveTxt">Connecting…</span></div>
   </div>
-  <div class="tape"><div class="tapein" id="tape"></div></div>
+  <div class="tape" id="tape"></div>
 </header>
 
 <main class="wrap">
@@ -212,9 +225,10 @@ input:focus,select:focus{border-color:var(--acc)}
         </div>
 
         <div class="panel">
-          <div class="ph"><h3>Price chart</h3><div class="tf" id="tf"><button data-i="15m">15m</button><button data-i="1h" class="on">1H</button><button data-i="4h">4H</button><button data-i="1d">1D</button></div></div>
-          <div class="chartbox"><canvas id="chart"></canvas><div class="tip num" id="tip"></div></div>
-          <div class="legend"><span><i style="background:#F0B90B"></i>EMA 21</span><span><i style="background:#A78BFA"></i>EMA 50</span><span><i style="background:var(--acc)"></i>Entry</span><span><i style="background:var(--up)"></i>Target</span><span><i style="background:var(--dn)"></i>Stop loss</span></div>
+          <div class="ph"><h3>Price chart<span class="livebadge off" id="liveB"><i></i>CONNECTING</span></h3><div class="ctl"><div class="tf" id="cmode"><button data-m="ai" class="on">Signal chart</button><button data-m="tv">TradingView</button></div><div class="tf" id="tf"><button data-i="15m">15m</button><button data-i="1h" class="on">1H</button><button data-i="4h">4H</button><button data-i="1d">1D</button></div></div></div>
+          <div class="chartbox" id="aibox"><canvas id="chart"></canvas><div class="tip num" id="tip"></div></div>
+          <div class="tvbox hide" id="tvbox"></div>
+          <div class="legend" id="lgd"><span><i style="background:#F0B90B"></i>EMA 21</span><span><i style="background:#A78BFA"></i>EMA 50</span><span><i style="background:var(--acc)"></i>Entry</span><span><i style="background:var(--up)"></i>Target</span><span><i style="background:var(--dn)"></i>Stop loss</span></div>
         </div>
 
         <div class="panel">
@@ -227,7 +241,7 @@ input:focus,select:focus{border-color:var(--acc)}
       <div>
         <div class="panel" id="sig"><div class="empty">Waiting for the first signals…</div></div>
         <div class="panel">
-          <div class="ph"><h3>Watchlist</h3><span class="small mut">Tap to open</span></div>
+          <div class="ph"><h3>Markets</h3><div class="tf" id="mf"><button data-f="all" class="on">All</button><button data-f="crypto">Crypto</button><button data-f="stock">Stocks</button></div></div>
           <table><thead><tr><th>Asset</th><th class="hsm">48h</th><th>Price</th><th>Signal</th></tr></thead><tbody id="wl"></tbody></table>
         </div>
       </div>
@@ -301,13 +315,17 @@ const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
 const BX = 'https://data-api.binance.vision/api/v3/';
 const WS = 'wss://data-stream.binance.vision/stream?streams=';
 const $ = id => document.getElementById(id);
-const NAMES = {BTC:'Bitcoin',ETH:'Ethereum',SOL:'Solana',XRP:'XRP',BNB:'BNB',ADA:'Cardano',DOGE:'Dogecoin',AVAX:'Avalanche',LINK:'Chainlink',DOT:'Polkadot'};
-const COLORS = {BTC:'#F7931A',ETH:'#627EEA',SOL:'#9945FF',XRP:'#23292F',BNB:'#F0B90B',ADA:'#0033AD',DOGE:'#C2A633',AVAX:'#E84142',LINK:'#2A5ADA',DOT:'#E6007A'};
+const NAMES = {BTC:'Bitcoin',ETH:'Ethereum',SOL:'Solana',XRP:'XRP',BNB:'BNB',ADA:'Cardano',DOGE:'Dogecoin',AVAX:'Avalanche',LINK:'Chainlink',DOT:'Polkadot',TRX:'TRON',LTC:'Litecoin',BCH:'Bitcoin Cash',NEAR:'NEAR Protocol',SUI:'Sui',TON:'Toncoin',APT:'Aptos',PEPE:'Pepe',
+  AAPL:'Apple',MSFT:'Microsoft',NVDA:'NVIDIA',TSLA:'Tesla',AMZN:'Amazon',META:'Meta Platforms',GOOGL:'Alphabet (Google)',AMD:'AMD',NFLX:'Netflix',PLTR:'Palantir',COIN:'Coinbase',SPY:'S&P 500 ETF',QQQ:'Nasdaq 100 ETF',GLD:'Gold ETF'};
+const STOCK_EX = {SPY:'AMEX',GLD:'AMEX'};
+const COLORS = {BTC:'#F7931A',ETH:'#627EEA',SOL:'#9945FF',XRP:'#23292F',BNB:'#F0B90B',ADA:'#0033AD',DOGE:'#C2A633',AVAX:'#E84142',LINK:'#2A5ADA',DOT:'#E6007A',TRX:'#EF0027',LTC:'#345D9D',BCH:'#0AC18E',NEAR:'#00A86B',SUI:'#4DA2FF',TON:'#0098EA',APT:'#2D2D2D',PEPE:'#3D9B3D',
+  AAPL:'#555555',MSFT:'#00A4EF',NVDA:'#76B900',TSLA:'#CC0000',AMZN:'#FF9900',META:'#0866FF',GOOGL:'#4285F4',AMD:'#ED1C24',NFLX:'#E50914',PLTR:'#101113',COIN:'#0052FF',SPY:'#1E3A8A',QQQ:'#0E7490',GLD:'#B8860B'};
 const STYLES = {safe:{risk:.5,alloc:15}, normal:{risk:1,alloc:25}, bold:{risk:2,alloc:40}};
 const store = {get(k){try{return localStorage.getItem('th_'+k)}catch(e){return null}}, set(k,v){try{localStorage.setItem('th_'+k,v)}catch(e){}}};
 
 let sigs = {}, order = [], sel = store.get('sel') || null, style = 'normal', nextRunMs = 0, fb = null;
 let live = {}, sparks = {}, candles = [], interval = '1h', liveOk = false, hover = null;
+let filt = store.get('filt') || 'all', cmode = 'ai', kws = null, kwsOk = false, tvFor = '', tapeKey = '';
 
 /* ---------- format ---------- */
 const fp = p => p==null||isNaN(p) ? '—' : p>=1000 ? p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : p>=1 ? p.toFixed(p>=100?2:4) : p.toPrecision(4);
@@ -316,7 +334,12 @@ const pct = x => (x>0?'+':'')+(+x).toFixed(2)+'%';
 const big = x => x>=1e9 ? (x/1e9).toFixed(2)+'B' : x>=1e6 ? (x/1e6).toFixed(2)+'M' : x>=1e3 ? (x/1e3).toFixed(1)+'K' : Math.round(x)+'';
 const act = d => d==='UP'?'BUY':d==='DOWN'?'SELL':'WAIT';
 const av = (n, cls='') => `<div class="av ${cls}" style="background:${COLORS[n]||'#334'}">${n.slice(0,4)}</div>`;
-const priceOf = n => (live[n] && live[n].c) || (sigs[n] && sigs[n].price);
+const isStock = n => !!(sigs[n] && sigs[n].market === 'stock');
+const pairOf = n => isStock(n) ? n : n + '/USDT';
+const tvSym = n => isStock(n) ? (STOCK_EX[n] || 'NASDAQ') + ':' + n : 'BINANCE:' + n + 'USDT';
+const hm = ms => new Date(ms).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+const ago = ms => { const m = Math.max(0, Math.round((Date.now() - ms)/60000)); return m < 60 ? m + 'm ago' : Math.floor(m/60) + 'h ' + (m%60) + 'm ago' };
+const priceOf = n => (live[n] && live[n].c) || (sigs[n] && (sigs[n].lastPrice || sigs[n].price));
 const chgOf = n => live[n] ? live[n].chg : sigs[n] ? sigs[n].chg24 : null;
 const strengthLabel = c => c>=75?'Very strong':c>=55?'Strong':c>=35?'Moderate':'Weak';
 
@@ -342,27 +365,32 @@ function renderHeader(){
   const n = sel, s = sigs[n]; if (!s) return;
   const L = live[n], p = priceOf(n), c = chgOf(n);
   $('aAv').outerHTML = av(n).replace('class="av ','id="aAv" class="av ');
-  $('aPair').innerHTML = `${n}<span>/USDT</span>`;
-  $('aName').textContent = (NAMES[n]||n) + (liveOk ? ' · Live' : ' · Hourly data');
+  $('aPair').innerHTML = isStock(n) ? `${n}<span class="mk">US STOCK</span>` : `${n}<span>/USDT</span>`;
+  $('aName').textContent = (NAMES[n]||n) + (isStock(n) ? (s.marketOpen ? ' · Market open' : ' · Market closed') : liveOk ? ' · Live' : ' · Hourly data');
   $('aPx').textContent = fp(p);
   const ce = $('aChg'); ce.textContent = c==null?'—':pct(c); ce.className = 'chg num '+(c>=0?'up':'dn');
   $('aHi').textContent = fp(L ? L.h : s.hi24); $('aLo').textContent = fp(L ? L.l : s.lo24);
   $('aVol').textContent = '$'+big(L ? L.q : s.vol24||0); $('aRsi').textContent = s.rsi!=null ? (+s.rsi).toFixed(1) : '—';
-  document.title = `${fp(p)} · ${n}/USDT · AI Trade Notify`;
+  document.title = `${fp(p)} · ${pairOf(n)} · AI Trade Notify`;
 }
 function renderSignal(){
   const s = sigs[sel], el = $('sig'); if (!s) return;
-  const a = act(s.dir), lp = priceOf(sel);
+  const a = act(s.dir), lp = priceOf(sel), closed = isStock(sel) && !s.marketOpen;
   const segs = Array.from({length:20},(_,i)=>`<i style="${i < Math.round(s.conf/5) ? `background:${a==='BUY'?'var(--up)':a==='SELL'?'var(--dn)':'var(--mut)'}` : ''}"></i>`).join('');
   let h = `<div class="sigtop"><h3 style="margin:0;font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.02em">AI signal · 1H</h3><span class="badge ${a}">${a==='BUY'?'▲':a==='SELL'?'▼':'■'} ${a}</span></div>`;
+  const bigTxt = closed ? 'MARKET CLOSED' : a==='BUY' ? 'BUY NOW' : a==='SELL' ? 'SELL NOW' : 'NO TRADE';
+  const subTxt = closed ? `Last signal ${a} · resumes at the next US market open` : a==='WAIT' ? `${pairOf(sel)} · wait for a clearer setup` : `${pairOf(sel)} at market · ${fp(lp)}`;
+  h += `<div class="act ${closed?'WAIT':a}"><div><div class="big">${bigTxt}</div><div class="small mut">${subTxt}</div></div>
+    <div class="timer"><div class="l">${closed?'Signal paused':a==='WAIT'?'Next check in':'Valid for'}</div><b id="vt">--:--</b></div></div>
+    <div class="vbar"><i id="vbar"></i></div>
+    <div class="mrow" style="margin-top:6px"><span>Issued ${s.issuedAt ? hm(s.issuedAt) : '—'}</span><span>${s.since && a!=='WAIT' ? a+' since '+hm(s.since)+' · '+ago(s.since) : ''}</span></div>`;
   if (a === 'WAIT'){
-    h += `<div class="sigact">No trade on ${sel}</div><div class="small mut">Indicators disagree. Staying out is a valid position.</div>
+    h += `<div class="small mut" style="margin-top:12px">Indicators disagree. Staying out is a valid position.</div>
       <div class="meter">${segs}</div><div class="mrow"><span>Signal strength</span><span class="num">${s.conf}/100 · ${strengthLabel(s.conf)}</span></div>`;
   } else {
     const buy = a==='BUY', z = size(s.price, s.stop, s.tp1, s.tp2), d = x => pct((x/s.price-1)*100);
     const moved = lp ? (lp/s.price-1)*100*(buy?1:-1) : 0;
-    h += `<div class="sigact ${buy?'up':'dn'}">${buy?'Long':'Short'} ${sel}/USDT</div>
-      <div class="small mut">Signal at <span class="num">${fp(s.price)}</span> · now <span class="num ${moved>=0?'up':'dn'}">${fp(lp)} (${pct(moved)})</span></div>
+    h += `<div class="small mut" style="margin-top:12px">Signal at <span class="num">${fp(s.price)}</span> · now <span class="num ${moved>=0?'up':'dn'}">${fp(lp)} (${pct(moved)})</span></div>
       <div class="meter">${segs}</div><div class="mrow"><span title="How strongly the indicators agree. Not a probability of profit.">Signal strength ⓘ</span><span class="num">${s.conf}/100 · ${strengthLabel(s.conf)}</span></div>
       <div class="levels">
         <div class="lv e"><div class="l">Entry</div><div class="v num">${fp(s.price)}</div><div class="d mut">Market</div></div>
@@ -379,7 +407,6 @@ function renderSignal(){
       ${!buy?'<p class="note">Short positions need a futures or margin account. On a spot account, treat this as "avoid buying".</p>':''}
       ${z.small?'<p class="err">Position is below your exchange minimum order.</p>':''}`;
   }
-  h += `<div class="cd"><span>Next signal update</span><b id="cd">--:--</b></div>`;
   el.innerHTML = h; tick();
 }
 const IND = {
@@ -407,25 +434,31 @@ function sparkSvg(arr, up){
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline fill="none" stroke="${col}" stroke-width="1.6" points="${pts}"/></svg>`;
 }
 function renderWatch(){
-  $('wl').innerHTML = order.map(n => { const s = sigs[n], c = chgOf(n), a = act(s.dir), sp = sparks[n] || (s.candles||[]).slice(-48).map(x=>x[4]);
-    return `<tr data-n="${n}" class="${n===sel?'sel':''}"><td><div class="coin">${av(n,'sm')}<div><b>${n}</b><small>${NAMES[n]||''}</small></div></div></td>
+  $('wl').innerHTML = order.filter(n => filt === 'all' || (filt === 'stock') === isStock(n)).map(n => { const s = sigs[n], c = chgOf(n), a = act(s.dir), sp = sparks[n] || (s.candles||[]).slice(-48).map(x=>x[4]);
+    return `<tr data-n="${n}" class="${n===sel?'sel':''}"><td><div class="coin">${av(n,'sm')}<div><b>${n}</b><small>${NAMES[n]||''}${isStock(n) ? (s.marketOpen ? ' · Open' : ' · Closed') : ''}</small></div></div></td>
       <td class="hsm">${sparkSvg(sp, sp.length>1 ? sp.at(-1)>=sp[0] : c>=0)}</td>
       <td><div class="num" data-p="${n}">${fp(priceOf(n))}</div><div class="num small ${c>=0?'up':'dn'}" data-c="${n}">${c==null?'':pct(c)}</div></td>
       <td><span class="badge ${a}">${a}</span><div class="small mut num">${a==='WAIT'?'':s.conf+'/100'}</div></td></tr>` }).join('');
   document.querySelectorAll('#wl tr').forEach(r => r.onclick = () => select(r.dataset.n, true));
   renderTape();
 }
+function tvEmbed(box, file, cfg){
+  box.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%"><div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div></div>';
+  const sc = document.createElement('script'); sc.src = 'https://s3.tradingview.com/external-embedding/' + file; sc.async = true; sc.text = JSON.stringify(cfg);
+  box.firstChild.appendChild(sc);
+}
 function renderTape(){
-  const one = order.map(n => { const c = chgOf(n); return `<span class="ti" data-n="${n}"><b>${n}</b><span class="num" data-p="${n}">${fp(priceOf(n))}</span><span class="num ${c>=0?'up':'dn'}" data-c="${n}">${c==null?'':pct(c)}</span></span>` }).join('');
-  $('tape').innerHTML = one + one;
-  document.querySelectorAll('.ti').forEach(t => t.onclick = () => { select(t.dataset.n, true); show('markets') });
+  const syms = Object.keys(sigs).sort((a,b) => isStock(a) - isStock(b)), key = syms.join();
+  if (key === tapeKey) return; tapeKey = key;
+  tvEmbed($('tape'), 'embed-widget-ticker-tape.js', {symbols: syms.map(n => ({proName: tvSym(n), title: n})), showSymbolLogo: true, isTransparent: true, displayMode: 'adaptive', colorTheme: 'dark', locale: 'en'});
 }
 function select(n, scroll){
-  sel = n; store.set('sel', n);
+  sel = n; store.set('sel', n); cmode = isStock(n) ? 'tv' : 'ai'; syncMode();
   renderHeader(); renderSignal(); renderIndicators(); renderWatch(); loadChart();
   if (scroll && innerWidth < 980) window.scrollTo({top:0, behavior:'smooth'});
 }
-function renderAll(){ setOrder(); renderHeader(); renderSignal(); renderIndicators(); renderWatch(); if (!candles.length) loadChart(); else draw() }
+function renderAll(){ setOrder(); renderHeader(); renderSignal(); renderIndicators(); renderWatch();
+  if (!candles.length && !tvFor && !kws){ cmode = isStock(sel) ? 'tv' : 'ai'; syncMode(); loadChart() } else draw() }
 
 /* ---------- live prices (Binance public stream) ---------- */
 function updateLiveCells(n){
@@ -435,9 +468,9 @@ function updateLiveCells(n){
 }
 let ws, wsSyms = '';
 function startLive(){
-  const syms = Object.keys(sigs).sort().join(); if (!syms || syms === wsSyms) return; wsSyms = syms;
+  const cr = Object.keys(sigs).filter(n => !isStock(n)), syms = cr.sort().join(); if (!syms || syms === wsSyms) return; wsSyms = syms;
   try { ws && ws.close() } catch(e){}
-  ws = new WebSocket(WS + Object.keys(sigs).map(n => n.toLowerCase()+'usdt@miniTicker').join('/'));
+  ws = new WebSocket(WS + cr.map(n => n.toLowerCase()+'usdt@miniTicker').join('/'));
   ws.onopen = () => { liveOk = true; setLive() };
   ws.onclose = () => { liveOk = false; setLive(); setTimeout(() => { wsSyms = ''; startLive() }, 5000) };
   ws.onmessage = ev => {
@@ -449,19 +482,41 @@ function startLive(){
       const px = $('aPx');
       if (prev && c !== prev){ px.classList.remove('flu','fld'); void px.offsetWidth; px.classList.add(c>prev?'flu':'fld'); setTimeout(()=>px.classList.remove('flu','fld'), 600) }
       renderHeader(); renderSignal();
-      const k = candles.at(-1); if (k){ k.c = c; k.h = Math.max(k.h,c); k.l = Math.min(k.l,c); scheduleDraw() }
+      const k = candles.at(-1); if (k && !kwsOk){ k.c = c; k.h = Math.max(k.h,c); k.l = Math.min(k.l,c); scheduleDraw() }
     }
   };
 }
 async function loadSparks(){
-  await Promise.all(Object.keys(sigs).map(async n => { try { const r = await fetch(`${BX}klines?symbol=${n}USDT&interval=1h&limit=48`); if (r.ok) sparks[n] = (await r.json()).map(k => +k[4]) } catch(e){} }));
+  await Promise.all(Object.keys(sigs).filter(n => !isStock(n)).map(async n => { try { const r = await fetch(`${BX}klines?symbol=${n}USDT&interval=1h&limit=48`); if (r.ok) sparks[n] = (await r.json()).map(k => +k[4]) } catch(e){} }));
   renderWatch();
 }
 
 /* ---------- chart ---------- */
 let loadId = 0;
+function setLiveBadge(on, txt){ const b = $('liveB'); b.className = 'livebadge' + (on ? '' : ' off'); b.lastChild.textContent = txt || (on ? 'LIVE' : 'CONNECTING') }
+function syncMode(){ document.querySelectorAll('#cmode button').forEach(x => x.classList.toggle('on', x.dataset.m === cmode)) }
+function stopKline(){ const k = kws; kws = null; kwsOk = false; if (k) try { k.close() } catch(e){} }
+function startKline(n){
+  const k = new WebSocket(`wss://data-stream.binance.vision/ws/${n.toLowerCase()}usdt@kline_${interval}`); kws = k;
+  k.onopen = () => { if (kws === k){ kwsOk = true; setLiveBadge(true) } };
+  k.onclose = () => { if (kws === k){ kwsOk = false; setLiveBadge(false, 'RECONNECTING'); kws = null; setTimeout(() => { if (sel === n && cmode === 'ai' && !kws) loadChart() }, 4000) } };
+  k.onmessage = ev => { if (kws !== k) return; const x = JSON.parse(ev.data).k; if (!x) return;
+    const c = {t:+x.t, o:+x.o, h:+x.h, l:+x.l, c:+x.c}, last = candles.at(-1);
+    if (last && last.t === c.t) Object.assign(last, c); else if (!last || c.t > last.t){ candles.push(c); if (candles.length > 150) candles.shift() }
+    scheduleDraw() };
+}
+function showTV(n){
+  $('aibox').classList.add('hide'); $('lgd').classList.add('hide'); $('tvbox').classList.remove('hide'); setLiveBadge(true, 'LIVE · TradingView');
+  const key = n + '|' + interval; if (tvFor === key) return; tvFor = key;
+  tvEmbed($('tvbox'), 'embed-widget-advanced-chart.js', {autosize: true, symbol: tvSym(n), interval: {'15m':'15','1h':'60','4h':'240','1d':'D'}[interval], timezone: 'Asia/Qatar', theme: 'dark', style: '1', locale: 'en', backgroundColor: '#11151D', gridColor: 'rgba(31,38,51,1)', hide_side_toolbar: true, allow_symbol_change: false, save_image: false, calendar: false, studies: ['STD;EMA'], support_host: 'https://www.tradingview.com'});
+}
 async function loadChart(){
   const n = sel, id = ++loadId; if (!n) return;
+  stopKline();
+  if (cmode === 'tv'){ showTV(n); return }
+  tvFor = ''; $('tvbox').innerHTML = ''; $('tvbox').classList.add('hide'); $('aibox').classList.remove('hide'); $('lgd').classList.remove('hide');
+  if (isStock(n)){ candles = (sigs[n].candles || []).map(x => ({t:x[0], o:x[1], h:x[2], l:x[3], c:x[4]})); setLiveBadge(false, 'HOURLY · switch to TradingView for live'); draw(); return }
+  setLiveBadge(false);
   try {
     const r = await fetch(`${BX}klines?symbol=${n}USDT&interval=${interval}&limit=${innerWidth<600?70:120}`);
     if (!r.ok) throw 0;
@@ -471,13 +526,15 @@ async function loadChart(){
     if (id !== loadId) return;
     candles = ((sigs[n] && sigs[n].candles) || []).map(x => ({t:x[0], o:x[1], h:x[2], l:x[3], c:x[4]}));
   }
-  draw();
+  draw(); if (id === loadId && sel === n && cmode === 'ai') startKline(n);
 }
+document.querySelectorAll('#cmode button').forEach(b => b.onclick = () => { cmode = b.dataset.m; syncMode(); loadChart() });
+document.querySelectorAll('#mf button').forEach(b => { b.classList.toggle('on', b.dataset.f === filt); b.onclick = () => { filt = b.dataset.f; store.set('filt', filt); document.querySelectorAll('#mf button').forEach(x => x.classList.toggle('on', x === b)); renderWatch() } });
 document.querySelectorAll('#tf button').forEach(b => b.onclick = () => { interval = b.dataset.i; document.querySelectorAll('#tf button').forEach(x=>x.classList.toggle('on',x===b)); loadChart() });
 function emaArr(v,n){ const k=2/(n+1), o=[]; let p=null; v.forEach((x,i)=>{ if(i<n-1){o.push(null);return} p = p===null ? v.slice(0,n).reduce((a,b)=>a+b,0)/n : x*k+p*(1-k); o.push(p) }); return o }
 let raf = 0; function scheduleDraw(){ if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw() }) }
 function draw(){
-  const cv = $('chart'); if (!cv || $('v-markets').classList.contains('hide')) return;
+  const cv = $('chart'); if (!cv || cmode === 'tv' || $('v-markets').classList.contains('hide')) return;
   const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight; if (!W) return;
   cv.width = W*dpr; cv.height = H*dpr; const g = cv.getContext('2d'); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
   if (!candles.length){ g.fillStyle='#5B6577'; g.font='13px Inter'; g.fillText('Loading chart…', 12, 24); return }
@@ -514,7 +571,7 @@ const hov = e => { const r = cvEl.getBoundingClientRect(), x = (e.touches ? e.to
 cvEl.addEventListener('mousemove', hov); cvEl.addEventListener('touchmove', hov, {passive:true});
 cvEl.addEventListener('mouseleave', () => { hover = null; scheduleDraw() });
 addEventListener('resize', scheduleDraw);
-setInterval(() => { if (sel) loadChart() }, 60000);
+setInterval(() => { if (sel && cmode === 'ai' && !kws && !isStock(sel)) loadChart() }, 60000);
 
 /* ---------- picks ---------- */
 function renderPicks(p){
@@ -549,7 +606,7 @@ function renderPicks(p){
 function renderAlerts(list){
   if (!list.length){ $('alerts').className = 'empty'; $('alerts').textContent = 'No alerts yet.'; return }
   $('alerts').className = '';
-  $('alerts').innerHTML = list.map(a => { const x = act(a.dir); return `<div class="al">${av(a.name,'sm')}<div><b>${x} ${a.name}/USDT</b><div class="small mut num">Entry ${fp(a.price)} · TP ${fp(a.tp1)} · SL ${fp(a.stop)}</div></div>
+  $('alerts').innerHTML = list.map(a => { const x = act(a.dir); return `<div class="al">${av(a.name,'sm')}<div><b>${x} ${a.market === 'stock' ? a.name : a.name + '/USDT'}</b><div class="small mut num">Entry ${fp(a.price)} · TP ${fp(a.tp1)} · SL ${fp(a.stop)}</div></div>
     <div class="t"><span class="badge ${x}">${a.conf}/100</span><div style="margin-top:4px">${new Date(a.atMs).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit'})}</div></div></div>` }).join('');
 }
 
@@ -561,9 +618,14 @@ function setLive(){
   $('liveTxt').textContent = stale ? 'Signals delayed' : liveOk ? `Live · signals ${botWhen}` : botWhen ? `Signals ${botWhen}` : 'Connecting…';
 }
 function tick(){
-  const el = $('cd'); if (!el) return;
-  let t = nextRunMs; if (!t || t < Date.now()){ const h = 3600000; t = Math.floor(Date.now()/h)*h + h + 5*60000 }
-  const s = Math.max(0, Math.floor((t - Date.now())/1000)); el.textContent = String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+  const el = $('vt'), bar = $('vbar'), s = sigs[sel]; if (!el || !s) return;
+  if (isStock(sel) && !s.marketOpen){ el.textContent = '—'; bar.style.width = '0%'; return }
+  const H = 3600000; let until = s.validUntil || nextRunMs; if (!until) until = Math.floor(Date.now()/H)*H + H + 300000;
+  const start = s.issuedAt || until - H, left = until - Date.now();
+  if (left <= 0){ el.textContent = 'Updating…'; el.style.fontSize = '16px'; bar.style.width = '0%'; return }
+  const sec = Math.floor(left/1000), mm = String(Math.floor(sec/60)%60).padStart(2,'0'), ss = String(sec%60).padStart(2,'0');
+  el.textContent = (sec >= 3600 ? Math.floor(sec/3600) + ':' : '') + mm + ':' + ss;
+  bar.style.width = Math.max(0, Math.min(100, left/Math.max(1, until - start)*100)) + '%';
 }
 setInterval(tick, 1000);
 function toast(text){ const t = document.createElement('div'); t.className = 'toast'; t.textContent = text; t.onclick = () => t.remove(); document.body.appendChild(t); setTimeout(() => t.remove(), 8000) }
