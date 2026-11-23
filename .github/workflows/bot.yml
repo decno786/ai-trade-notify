@@ -2,7 +2,7 @@ name: Signal bot
 
 on:
   schedule:
-    - cron: '3 * * * *'      # every hour, 3 minutes after the hourly candle closes
+    - cron: '3,33 * * * *'   # twice an hour: crypto candles close at :00, US stock candles at :30
   workflow_dispatch:
     inputs:
       test_push:
