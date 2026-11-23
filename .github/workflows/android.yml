@@ -42,7 +42,7 @@ jobs:
           flutter --version
           flutter create --org com.tradehelper --project-name trade_helper --platforms android .
           rm -rf test analysis_options.yaml
-          flutter pub add firebase_core cloud_firestore firebase_messaging shared_preferences http
+          flutter pub add firebase_core cloud_firestore firebase_messaging shared_preferences http webview_flutter
 
           G=$(ls android/app/build.gradle* | head -1)
           if [[ "$G" == *.kts ]]; then
