@@ -1,15 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show WebSocket;
 import 'dart:math' as math;
 import 'dart:ui' show FontFeature;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'firebase_config.dart';
 
@@ -40,11 +44,21 @@ TextStyle mono(double size, {Color color = kText, FontWeight w = FontWeight.w600
 const coinNames = {
   'BTC': 'Bitcoin', 'ETH': 'Ethereum', 'SOL': 'Solana', 'XRP': 'XRP', 'BNB': 'BNB',
   'ADA': 'Cardano', 'DOGE': 'Dogecoin', 'AVAX': 'Avalanche', 'LINK': 'Chainlink', 'DOT': 'Polkadot',
+  'TRX': 'TRON', 'LTC': 'Litecoin', 'BCH': 'Bitcoin Cash', 'NEAR': 'NEAR Protocol', 'SUI': 'Sui', 'TON': 'Toncoin',
+  'APT': 'Aptos', 'PEPE': 'Pepe', 'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'NVIDIA', 'TSLA': 'Tesla',
+  'AMZN': 'Amazon', 'META': 'Meta Platforms', 'GOOGL': 'Alphabet', 'AMD': 'AMD', 'NFLX': 'Netflix',
+  'PLTR': 'Palantir', 'COIN': 'Coinbase', 'SPY': 'S&P 500 ETF', 'QQQ': 'Nasdaq 100 ETF', 'GLD': 'Gold ETF',
 };
+const stockExchange = {'SPY': 'AMEX', 'GLD': 'AMEX'};
 const coinColors = {
   'BTC': Color(0xFFF7931A), 'ETH': Color(0xFF627EEA), 'SOL': Color(0xFF9945FF), 'XRP': Color(0xFF23292F),
   'BNB': Color(0xFFF0B90B), 'ADA': Color(0xFF0033AD), 'DOGE': Color(0xFFC2A633), 'AVAX': Color(0xFFE84142),
-  'LINK': Color(0xFF2A5ADA), 'DOT': Color(0xFFE6007A),
+  'LINK': Color(0xFF2A5ADA), 'DOT': Color(0xFFE6007A), 'TRX': Color(0xFFEF0027), 'LTC': Color(0xFF345D9D),
+  'BCH': Color(0xFF0AC18E), 'NEAR': Color(0xFF00A86B), 'SUI': Color(0xFF4DA2FF), 'TON': Color(0xFF0098EA),
+  'APT': Color(0xFF2D2D2D), 'PEPE': Color(0xFF3D9B3D), 'AAPL': Color(0xFF555555), 'MSFT': Color(0xFF00A4EF),
+  'NVDA': Color(0xFF76B900), 'TSLA': Color(0xFFCC0000), 'AMZN': Color(0xFFFF9900), 'META': Color(0xFF0866FF),
+  'GOOGL': Color(0xFF4285F4), 'AMD': Color(0xFFED1C24), 'NFLX': Color(0xFFE50914), 'PLTR': Color(0xFF101113),
+  'COIN': Color(0xFF0052FF), 'SPY': Color(0xFF1E3A8A), 'QQQ': Color(0xFF0E7490), 'GLD': Color(0xFFB8860B),
 };
 
 /// risk profile -> [risk % per trade, max % of account in one position]
@@ -158,6 +172,12 @@ class Signal {
         tp1 = _d(m['tp1']),
         tp2 = _d(m['tp2']),
         conf = _i(m['conf']),
+        market = (m['market'] ?? 'crypto') as String,
+        marketOpen = m['marketOpen'] != false,
+        lastPrice = _d(m['lastPrice']),
+        validUntil = _i(m['validUntil']),
+        issuedAt = _i(m['issuedAt']),
+        since = _i(m['since']),
         rsi = m['rsi'] is num ? _d(m['rsi']) : null,
         ema21 = m['ema21'] is num ? _d(m['ema21']) : null,
         ema50 = m['ema50'] is num ? _d(m['ema50']) : null,
@@ -181,12 +201,18 @@ class Signal {
   final String name, dir;
   final double price, stop, tp1, tp2, hi24, lo24, vol24;
   final double? rsi, ema21, ema50, macd, bbPos, volRatio, chg24;
-  final int conf;
+  final int conf, validUntil, issuedAt, since;
+  final String market;
+  final bool marketOpen;
+  final double lastPrice;
   final List<Map<String, dynamic>> checks;
   final List<Candle> candles;
 
   bool get isUp => dir == 'UP';
   bool get isWait => dir == 'WAIT';
+  bool get isStock => market == 'stock';
+  String get pair => isStock ? name : '$name/USDT';
+  String get tvSymbol => isStock ? '${stockExchange[name] ?? 'NASDAQ'}:$name' : 'BINANCE:${name}USDT';
   String get action => isWait ? 'WAIT' : (isUp ? 'BUY' : 'SELL');
   Color get color => isWait ? kMuted : (isUp ? kUp : kDown);
 
@@ -237,6 +263,14 @@ String bigNum(double x) => x >= 1e9
             ? '${(x / 1e3).toStringAsFixed(1)}K'
             : x.toStringAsFixed(0);
 String two(int n) => n.toString().padLeft(2, '0');
+String hm(int ms) {
+  final t = DateTime.fromMillisecondsSinceEpoch(ms);
+  return '${two(t.hour)}:${two(t.minute)}';
+}
+String ago(int ms) {
+  final m = math.max(0, (DateTime.now().millisecondsSinceEpoch - ms) ~/ 60000);
+  return m < 60 ? '${m}m ago' : '${m ~/ 60}h ${m % 60}m ago';
+}
 
 String timeAgo(int ms) {
   if (ms <= 0) return '';
@@ -267,7 +301,7 @@ class AppState extends ChangeNotifier {
   String? error;
 
   double balance = 1000, fee = 0.1, minOrder = 10;
-  String risk = 'normal';
+  String risk = 'normal', filter = 'all';
   bool alertsOn = false, askedAlerts = false;
 
   Future<void> start() async {
@@ -316,7 +350,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _pollTickers() async {
     if (order.isEmpty) return;
-    final syms = jsonEncode(order.map((n) => '${n}USDT').toList());
+    final syms = jsonEncode(order.where((n) => !signals[n]!.isStock).map((n) => '${n}USDT').toList());
     try {
       final r = await http
           .get(Uri.parse('${binance}ticker/24hr?symbols=${Uri.encodeComponent(syms)}'))
@@ -336,7 +370,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _loadSparks() async {
-    await Future.wait(order.map((n) async {
+    await Future.wait(order.where((n) => !signals[n]!.isStock).map((n) async {
       try {
         final r = await http
             .get(Uri.parse('${binance}klines?symbol=${n}USDT&interval=1h&limit=48'))
@@ -349,7 +383,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  double? priceOf(String n) => live[n]?.price ?? signals[n]?.price;
+  double? priceOf(String n) {
+    final s = signals[n];
+    return live[n]?.price ?? (s == null ? null : (s.lastPrice > 0 ? s.lastPrice : s.price));
+  }
+
+  List<String> get visible => order.where((n) => filter == 'all' || (filter == 'stock') == signals[n]!.isStock).toList();
+  void setFilter(String f) {
+    filter = f;
+    notifyListeners();
+  }
   double? chgOf(String n) => live[n]?.chg ?? signals[n]?.chg24;
   List<double> sparkOf(String n) => sparks[n] ?? (signals[n]?.candles ?? const []).map((c) => c.c).toList();
 
@@ -1026,9 +1069,34 @@ class MarketsPage extends StatelessWidget {
                 child: TopSignalCard(app: app, s: top, onTap: () => onOpen(top.name)),
               ),
             ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+              child: Row(children: [
+                const Text('Markets', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                const Spacer(),
+                for (final f in const [['all', 'All'], ['crypto', 'Crypto'], ['stock', 'Stocks']])
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: ChoiceChip(
+                      label: Text(f[1]),
+                      selected: app.filter == f[0],
+                      showCheckmark: false,
+                      visualDensity: VisualDensity.compact,
+                      labelStyle: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w700, color: app.filter == f[0] ? kText : kMuted),
+                      side: const BorderSide(color: kLine),
+                      backgroundColor: kPanel2,
+                      selectedColor: kLine2,
+                      onSelected: (_) => app.setFilter(f[0]),
+                    ),
+                  ),
+              ]),
+            ),
+          ),
           const SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(16, 20, 16, 6),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 6),
               child: Row(children: [
                 Expanded(flex: 5, child: _Head('Asset')),
                 Expanded(flex: 3, child: _Head('48h')),
@@ -1038,8 +1106,8 @@ class MarketsPage extends StatelessWidget {
             ),
           ),
           SliverList.builder(
-            itemCount: app.order.length,
-            itemBuilder: (_, i) => MarketRow(app: app, symbol: app.order[i], onTap: () => onOpen(app.order[i])),
+            itemCount: app.visible.length,
+            itemBuilder: (_, i) => MarketRow(app: app, symbol: app.visible[i], onTap: () => onOpen(app.visible[i])),
           ),
           const SliverToBoxAdapter(child: Disclaimer()),
         ],
@@ -1279,6 +1347,8 @@ class TopSignalCard extends StatelessWidget {
           Row(children: [
             const SectionLabel('Top signal'),
             const Spacer(),
+            ValidFor(app: app, s: s),
+            const SizedBox(width: 8),
             SignalBadge(s.action, large: true),
           ]),
           const SizedBox(height: 12),
@@ -1287,7 +1357,7 @@ class TopSignalCard extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('${s.isUp ? 'Long' : 'Short'} ${s.name}/USDT',
+                Text('${s.isUp ? 'BUY' : 'SELL'} ${s.pair}',
                     style: TextStyle(color: s.color, fontSize: 19, fontWeight: FontWeight.w800)),
                 Text('Strength ${s.conf}/100 · ${strengthLabel(s.conf)}',
                     style: mono(12.5, color: kMuted, w: FontWeight.w500)),
@@ -1346,7 +1416,7 @@ class MarketRow extends StatelessWidget {
               Flexible(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(symbol, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5)),
-                  Text(coinNames[symbol] ?? '',
+                  Text('${coinNames[symbol] ?? ''}${s.isStock ? (s.marketOpen ? ' · Open' : ' · Closed') : ''}',
                       overflow: TextOverflow.ellipsis, style: const TextStyle(color: kMuted, fontSize: 11.5)),
                 ]),
               ),
@@ -1443,6 +1513,9 @@ class _AssetPageState extends State<AssetPage> {
   List<Candle> candles = [];
   Timer? _refresh;
   int _loadId = 0;
+  WebSocket? _ws;
+  bool liveChart = false;
+  late bool tv = widget.app.signals[widget.symbol]?.isStock ?? false;
 
   @override
   void initState() {
@@ -1454,7 +1527,7 @@ class _AssetPageState extends State<AssetPage> {
 
   void _onLive() {
     final p = widget.app.live[widget.symbol]?.price;
-    if (p != null && candles.isNotEmpty) {
+    if (p != null && candles.isNotEmpty && !liveChart) {
       final k = candles.last;
       k.c = p;
       k.h = math.max(k.h, p);
@@ -1465,6 +1538,13 @@ class _AssetPageState extends State<AssetPage> {
 
   Future<void> _load() async {
     final id = ++_loadId;
+    final sig = widget.app.signals[widget.symbol];
+    if (sig != null && sig.isStock) {
+      candles = sig.candles;
+      if (id > 1 && mounted) setState(() {});
+      return;
+    }
+    if (_ws != null) return; // live stream already running
     try {
       final r = await http
           .get(Uri.parse('${binance}klines?symbol=${widget.symbol}USDT&interval=$interval&limit=80'))
@@ -1475,15 +1555,65 @@ class _AssetPageState extends State<AssetPage> {
           .map((x) => Candle((x[0] as num).toInt(), double.parse(x[1] as String), double.parse(x[2] as String),
               double.parse(x[3] as String), double.parse(x[4] as String)))
           .toList();
-      if (mounted && id == _loadId) setState(() => candles = list);
+      if (mounted && id == _loadId) {
+        setState(() => candles = list);
+        _startWs();
+      }
     } catch (_) {
       final s = widget.app.signals[widget.symbol];
       if (mounted && id == _loadId && candles.isEmpty && s != null) setState(() => candles = s.candles);
     }
   }
 
+  Future<void> _startWs() async {
+    _stopWs();
+    final iv = interval;
+    try {
+      final ws = await WebSocket.connect(
+          'wss://data-stream.binance.vision/ws/${widget.symbol.toLowerCase()}usdt@kline_$iv');
+      if (!mounted || iv != interval) {
+        ws.close();
+        return;
+      }
+      _ws = ws;
+      setState(() => liveChart = true);
+      ws.listen((msg) {
+        final k = (jsonDecode(msg as String) as Map)['k'] as Map?;
+        if (k == null || !mounted) return;
+        final nc = Candle((k['t'] as num).toInt(), double.parse(k['o'] as String), double.parse(k['h'] as String),
+            double.parse(k['l'] as String), double.parse(k['c'] as String));
+        setState(() {
+          if (candles.isNotEmpty && candles.last.t == nc.t) {
+            candles.last
+              ..h = nc.h
+              ..l = nc.l
+              ..c = nc.c;
+          } else if (candles.isEmpty || nc.t > candles.last.t) {
+            candles = [...candles, nc];
+            if (candles.length > 120) candles = candles.sublist(candles.length - 120);
+          }
+        });
+      }, onDone: () {
+        if (_ws == ws) {
+          _ws = null;
+          if (mounted) setState(() => liveChart = false);
+        }
+      }, onError: (Object _) {});
+    } catch (_) {
+      if (mounted) setState(() => liveChart = false);
+    }
+  }
+
+  void _stopWs() {
+    final w = _ws;
+    _ws = null;
+    liveChart = false;
+    w?.close();
+  }
+
   @override
   void dispose() {
+    _stopWs();
     _refresh?.cancel();
     widget.app.removeListener(_onLive);
     super.dispose();
@@ -1500,7 +1630,8 @@ class _AssetPageState extends State<AssetPage> {
           CoinAvatar(n, size: 28),
           const SizedBox(width: 10),
           Text('$n', style: const TextStyle(fontWeight: FontWeight.w800)),
-          const Text('/USDT', style: TextStyle(color: kMuted, fontWeight: FontWeight.w600)),
+          Text(s?.isStock == true ? '  US STOCK' : '/USDT',
+              style: const TextStyle(color: kMuted, fontWeight: FontWeight.w600, fontSize: 13)),
         ]),
         actions: [Padding(padding: const EdgeInsets.only(right: 12), child: StatusPill(app: app))],
       ),
@@ -1528,6 +1659,37 @@ class _AssetPageState extends State<AssetPage> {
                   Row(children: [
                     const SizedBox(width: 4),
                     const SectionLabel('Chart'),
+                    const SizedBox(width: 8),
+                    LiveBadge(
+                        on: tv || liveChart,
+                        label: tv ? 'LIVE' : liveChart ? 'LIVE' : (s.isStock ? 'HOURLY' : 'CONNECTING')),
+                    const Spacer(),
+                    for (final m in const [[false, 'Signal'], [true, 'TradingView']])
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: ChoiceChip(
+                          label: Text(m[1] as String),
+                          selected: tv == m[0],
+                          showCheckmark: false,
+                          visualDensity: VisualDensity.compact,
+                          labelStyle: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w700, color: tv == m[0] ? kText : kMuted),
+                          side: const BorderSide(color: kLine),
+                          backgroundColor: kPanel2,
+                          selectedColor: kLine2,
+                          onSelected: (_) {
+                            final v = m[0] as bool;
+                            setState(() {
+                              tv = v;
+                              if (v) _stopWs();
+                            });
+                            if (!v) _load();
+                          },
+                        ),
+                      ),
+                  ]),
+                  const SizedBox(height: 6),
+                  Row(children: [
                     const Spacer(),
                     for (final iv in ['15m', '1h', '4h', '1d'])
                       Padding(
@@ -1547,15 +1709,21 @@ class _AssetPageState extends State<AssetPage> {
                               interval = iv;
                               candles = [];
                             });
+                            _stopWs();
                             _load();
                           },
                         ),
                       ),
                   ]),
                   const SizedBox(height: 8),
-                  SizedBox(height: 280, child: CandleChart(candles: candles, signal: s, daily: interval == '1d')),
-                  const SizedBox(height: 8),
-                  const Wrap(spacing: 14, runSpacing: 4, children: [
+                  SizedBox(
+                    height: tv ? 400 : 280,
+                    child: tv
+                        ? TradingViewChart(symbol: s.tvSymbol, interval: interval)
+                        : CandleChart(candles: candles, signal: s, daily: interval == '1d'),
+                  ),
+                  if (!tv) const SizedBox(height: 8),
+                  if (!tv) const Wrap(spacing: 14, runSpacing: 4, children: [
                     _Legend(kEma21, 'EMA 21'),
                     _Legend(kEma50, 'EMA 50'),
                     _Legend(kAccent, 'Entry'),
@@ -1616,16 +1784,14 @@ class SignalPanel extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           head,
           const SizedBox(height: 12),
-          Text('No trade on ${s.name}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
+          SignalBanner(app: app, s: s),
+          const SizedBox(height: 10),
           const Text('Indicators disagree. Staying out is a valid position.',
               style: TextStyle(color: kMuted, fontSize: 13)),
           const SizedBox(height: 14),
           StrengthMeter(s.conf, kMuted),
           const SizedBox(height: 6),
           Text('Signal strength ${s.conf}/100 · ${strengthLabel(s.conf)}', style: mono(12, color: kMuted)),
-          const SizedBox(height: 8),
-          _NextUpdate(app: app),
         ]),
       );
     }
@@ -1636,9 +1802,8 @@ class SignalPanel extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         head,
         const SizedBox(height: 12),
-        Text('${s.isUp ? 'Long' : 'Short'} ${s.name}/USDT',
-            style: TextStyle(color: s.color, fontSize: 22, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 2),
+        SignalBanner(app: app, s: s),
+        const SizedBox(height: 10),
         Text.rich(TextSpan(style: mono(12.5, color: kMuted, w: FontWeight.w500), children: [
           TextSpan(text: 'Signal at ${fp(s.price)} · now '),
           TextSpan(text: '${fp(now)} (${pct(moved)})', style: TextStyle(color: moved >= 0 ? kUp : kDown)),
@@ -1678,8 +1843,6 @@ class SignalPanel extends StatelessWidget {
             padding: EdgeInsets.only(top: 8),
             child: Text('Position is below your exchange minimum order.', style: TextStyle(color: kDown, fontSize: 12)),
           ),
-        const SizedBox(height: 10),
-        _NextUpdate(app: app),
       ]),
     );
   }
@@ -1985,7 +2148,7 @@ class AlertsPage extends StatelessWidget {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text('${a['dir'] == 'UP' ? 'BUY' : 'SELL'} ${a['name']}/USDT',
+                              Text('${a['dir'] == 'UP' ? 'BUY' : 'SELL'} ${a['market'] == 'stock' ? a['name'] : '${a['name']}/USDT'}',
                                   style: const TextStyle(fontWeight: FontWeight.w700)),
                               Text(
                                   'Entry ${fp(_d(a['price']))} · TP ${fp(_d(a['tp1']))} · SL ${fp(_d(a['stop']))}',
@@ -2180,4 +2343,195 @@ class _ToolsPageState extends State<ToolsPage> {
       ]),
     );
   }
+}
+
+// ================================================================ signal timer + live chart widgets
+/// (ms left, fraction of validity left) for a signal; ms <= 0 means it is waiting for the next update.
+(int, double) validity(AppState app, Signal s) {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  var until = s.validUntil > 0 ? s.validUntil : app.nextRunMs;
+  if (until <= 0) until = (now ~/ 3600000 + 1) * 3600000 + 300000;
+  final start = s.issuedAt > 0 ? s.issuedAt : until - 3600000;
+  final left = until - now;
+  return (left, left <= 0 ? 0.0 : (left / math.max(1, until - start)).clamp(0.0, 1.0).toDouble());
+}
+
+String clock(int ms) {
+  final sec = ms ~/ 1000;
+  return '${sec >= 3600 ? '${sec ~/ 3600}:' : ''}${two((sec ~/ 60) % 60)}:${two(sec % 60)}';
+}
+
+mixin _EverySecond<T extends StatefulWidget> on State<T> {
+  Timer? _sec;
+
+  @override
+  void initState() {
+    super.initState();
+    _sec = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _sec?.cancel();
+    super.dispose();
+  }
+}
+
+class SignalBanner extends StatefulWidget {
+  const SignalBanner({super.key, required this.app, required this.s});
+  final AppState app;
+  final Signal s;
+
+  @override
+  State<SignalBanner> createState() => _SignalBannerState();
+}
+
+class _SignalBannerState extends State<SignalBanner> with _EverySecond<SignalBanner> {
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.s, closed = s.isStock && !s.marketOpen;
+    final (left, frac) = validity(widget.app, s);
+    final neutral = closed || s.isWait;
+    final c = neutral ? kText : s.color;
+    final big = closed ? 'MARKET CLOSED' : s.isWait ? 'NO TRADE' : s.isUp ? 'BUY NOW' : 'SELL NOW';
+    final sub = closed
+        ? 'Last signal ${s.action} · resumes at the US market open'
+        : s.isWait
+            ? '${s.pair} · wait for a clearer setup'
+            : '${s.pair} at market · ${fp(widget.app.priceOf(s.name) ?? s.price)}';
+    final label = closed ? 'Signal paused' : s.isWait ? 'Next check in' : 'Valid for';
+    final time = closed ? '—' : left <= 0 ? 'Updating…' : clock(left);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: neutral ? kPanel2 : s.color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: neutral ? kLine : s.color.withValues(alpha: 0.45)),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(big, style: TextStyle(color: c, fontSize: 21, fontWeight: FontWeight.w800, letterSpacing: 0.3)),
+              const SizedBox(height: 2),
+              Text(sub, style: mono(11.5, color: kMuted, w: FontWeight.w500)),
+            ]),
+          ),
+          const SizedBox(width: 10),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text(label.toUpperCase(),
+                style: const TextStyle(color: kMuted, fontSize: 9.5, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+            Text(time, style: mono(left <= 0 && !closed ? 15 : 22, w: FontWeight.w700)),
+          ]),
+        ]),
+      ),
+      const SizedBox(height: 6),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: LinearProgressIndicator(
+            value: frac, minHeight: 4, backgroundColor: kLine, valueColor: const AlwaysStoppedAnimation(kAccent)),
+      ),
+      const SizedBox(height: 6),
+      Row(children: [
+        Text('Issued ${s.issuedAt > 0 ? hm(s.issuedAt) : '—'}', style: const TextStyle(color: kMuted, fontSize: 11.5)),
+        const Spacer(),
+        if (!s.isWait && s.since > 0)
+          Text('${s.action} since ${hm(s.since)} · ${ago(s.since)}',
+              style: const TextStyle(color: kMuted, fontSize: 11.5)),
+      ]),
+    ]);
+  }
+}
+
+class ValidFor extends StatefulWidget {
+  const ValidFor({super.key, required this.app, required this.s});
+  final AppState app;
+  final Signal s;
+
+  @override
+  State<ValidFor> createState() => _ValidForState();
+}
+
+class _ValidForState extends State<ValidFor> with _EverySecond<ValidFor> {
+  @override
+  Widget build(BuildContext context) {
+    final (left, _) = validity(widget.app, widget.s);
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      const Icon(Icons.timer_outlined, size: 14, color: kMuted),
+      const SizedBox(width: 3),
+      Text(left <= 0 ? 'updating' : clock(left), style: mono(12, color: kMuted)),
+    ]);
+  }
+}
+
+class LiveBadge extends StatelessWidget {
+  const LiveBadge({super.key, required this.on, required this.label});
+  final bool on;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+        PulseDot(color: on ? kUp : kDim, pulse: on),
+        const SizedBox(width: 5),
+        Text(label,
+            style: TextStyle(
+                color: on ? kUp : kMuted, fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+      ]);
+}
+
+/// Live TradingView chart (real-time crypto, 15-minute delayed US stocks).
+class TradingViewChart extends StatefulWidget {
+  const TradingViewChart({super.key, required this.symbol, required this.interval});
+  final String symbol, interval;
+
+  @override
+  State<TradingViewChart> createState() => _TradingViewChartState();
+}
+
+class _TradingViewChartState extends State<TradingViewChart> {
+  final _c = WebViewController();
+
+  @override
+  void initState() {
+    super.initState();
+    _c
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(kPanel)
+      ..loadHtmlString(_html(), baseUrl: 'https://decno786.github.io/');
+  }
+
+  @override
+  void didUpdateWidget(TradingViewChart old) {
+    super.didUpdateWidget(old);
+    if (old.symbol != widget.symbol || old.interval != widget.interval) {
+      _c.loadHtmlString(_html(), baseUrl: 'https://decno786.github.io/');
+    }
+  }
+
+  String _html() {
+    final iv = const {'15m': '15', '1h': '60', '4h': '240', '1d': 'D'}[widget.interval] ?? '60';
+    final cfg = jsonEncode({
+      'autosize': true, 'symbol': widget.symbol, 'interval': iv, 'timezone': 'Asia/Qatar', 'theme': 'dark',
+      'style': '1', 'locale': 'en', 'backgroundColor': '#11151D', 'gridColor': 'rgba(31,38,51,1)',
+      'hide_side_toolbar': true, 'allow_symbol_change': false, 'save_image': false, 'calendar': false,
+      'studies': ['STD;EMA'], 'support_host': 'https://www.tradingview.com',
+    });
+    return '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<style>html,body{margin:0;height:100%;background:#11151D}</style></head><body>'
+        '<div class="tradingview-widget-container" style="height:100%;width:100%">'
+        '<div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>'
+        '<script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>'
+        '$cfg</script></div></body></html>';
+  }
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: WebViewWidget(
+          controller: _c,
+          gestureRecognizers: {Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer())},
+        ),
+      );
 }
