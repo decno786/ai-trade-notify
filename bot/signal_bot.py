@@ -24,7 +24,10 @@ import sys
 import time
 import urllib.request
 
-COINS = ["BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "LINK", "DOT"]
+COINS = ["BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "LINK", "DOT",
+         "TRX", "LTC", "BCH", "NEAR", "SUI", "TON", "APT", "PEPE"]
+# US stocks and ETFs (prices from Yahoo Finance, hourly candles, regular hours)
+STOCKS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "NFLX", "PLTR", "COIN", "SPY", "QQQ", "GLD"]
 TF_MIN = 60                # hourly candles
 MIN_STARS_TO_ALERT = 4     # only push strong signals
 MAX_ALERTS_PER_RUN = 3     # never more than 3 notifications per hour
@@ -64,6 +67,50 @@ def from_kraken(coin):
 
 
 SOURCES = [("Binance", from_binance), ("Coinbase", from_coinbase), ("Kraken", from_kraken)]
+BROWSER_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"}
+
+
+def from_yahoo(ticker):
+    """Hourly candles for a US stock/ETF + whether the market is open now."""
+    last = None
+    for host in ("query1", "query2"):
+        try:
+            req = urllib.request.Request(
+                f"https://{host}.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1h&range=60d", headers=BROWSER_UA)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                res = json.load(r)["chart"]["result"][0]
+            break
+        except Exception as e:
+            last = e
+            time.sleep(1)
+    else:
+        raise RuntimeError(f"Yahoo: {last}")
+    q = res["indicators"]["quote"][0]
+    now = time.time()
+    reg = res["meta"].get("currentTradingPeriod", {}).get("regular", {})
+    is_open = bool(reg) and reg.get("start", 0) <= now < reg.get("end", 0)
+    cd = []
+    for i, t in enumerate(res.get("timestamp") or []):
+        o, h, l, c, v = (q[k][i] for k in ("open", "high", "low", "close", "volume"))
+        if None in (o, h, l, c):
+            continue
+        cd.append({"t": int(t) * 1000, "o": o, "h": h, "l": l, "c": c, "v": v or 0})
+    if is_open and cd and cd[-1]["t"] / 1000 + 3600 > now:
+        cd = cd[:-1]  # drop the hour that is still running
+    live = res["meta"].get("regularMarketPrice")
+    return cd[-200:], is_open, live
+
+
+def day_stats(cd):
+    """Change vs previous trading day's close, and today's high/low (New York days)."""
+    day = lambda x: (x["t"] // 1000 - 5 * 3600) // 86400
+    today = day(cd[-1])
+    prev = [x for x in cd if day(x) < today]
+    now = [x for x in cd if day(x) == today]
+    pc = prev[-1]["c"] if prev else cd[0]["o"]
+    return {"chg24": round((cd[-1]["c"] / pc - 1) * 100, 2), "prevClose": pc,
+            "hi24": max(x["h"] for x in now), "lo24": min(x["l"] for x in now),
+            "vol24": round(sum(x["v"] * x["c"] for x in now))}
 
 
 def get_candles(coin):
@@ -164,7 +211,11 @@ def analyse(cd):
 
 
 def fmt(p):
-    return f"{p:,.2f}" if p >= 100 else f"{p:,.4f}" if p >= 1 else f"{p:.6f}"
+    if p >= 100:
+        return f"{p:,.2f}"
+    if p >= 1:
+        return f"{p:,.4f}"
+    return f"{p:.10f}".rstrip("0") if p < 0.001 else f"{p:.6f}"
 
 
 def is_strong(s):
@@ -220,24 +271,40 @@ def main():
         print(f"New browsers subscribed to alerts: {subscribe_new_browsers(db, messaging)}")
 
     results, failed, sources = [], [], set()
+    now_ms = int(time.time() * 1000)
     for coin in COINS:
         try:
             cd, src = get_candles(coin)
             s = analyse(cd)
-            s.update(name=coin, source=src)
+            s.update(name=coin, source=src, market="crypto", marketOpen=True,
+                     validUntil=s["candleClose"] + TF_MIN * 60000 + 5 * 60000)
             results.append(s)
             sources.add(src)
             print(f"{coin:<5} {s['dir']:<5} {s['conf']:>3}%  {'*' * s['stars']:<5} {fmt(s['price']):>12}  ({src})")
         except Exception as e:
             failed.append(coin)
             print(f"{coin:<5} could not get prices: {e}")
+    for tk in STOCKS:
+        try:
+            cd, is_open, last = from_yahoo(tk)
+            if len(cd) < 60:
+                raise RuntimeError(f"only {len(cd)} candles")
+            s = analyse(cd)
+            s.update(day_stats(cd))
+            s.update(name=tk, source="Yahoo", market="stock", marketOpen=is_open, lastPrice=last or s["price"],
+                     validUntil=s["candleClose"] + TF_MIN * 60000 + 5 * 60000 if is_open else 0)
+            results.append(s)
+            sources.add("Yahoo")
+            print(f"{tk:<5} {s['dir']:<5} {s['conf']:>3}%  {'open' if is_open else 'closed':<6} {fmt(s['price']):>12}")
+        except Exception as e:
+            failed.append(tk)
+            print(f"{tk:<5} could not get prices: {e}")
 
     if not results:
         print("No prices from any source.")
         sys.exit(1)
 
     best = max(results, key=lambda r: (r["dir"] != "WAIT", r["conf"]))
-    now_ms = int(time.time() * 1000)
     next_ms = (now_ms // 3_600_000 + 1) * 3_600_000 + 5 * 60_000
     alerts = []
 
@@ -249,10 +316,13 @@ def main():
             old = old.to_dict() if old.exists else None
             if is_new_alert(s, old):
                 alerts.append(s)
+            # when did the current direction start? (for "signal active since")
+            s["since"] = old.get("since", now_ms) if old and old.get("dir") == s["dir"] else now_ms
+            s["issuedAt"] = now_ms
             batch.set(ref, {**s, "updatedAt": firestore.SERVER_TIMESTAMP})
         batch.set(db.collection("status").document("bot"), {
             "lastRun": firestore.SERVER_TIMESTAMP, "lastRunMs": now_ms, "nextRunMs": next_ms,
-            "tf": TF_MIN, "coins": len(results), "failed": failed,
+            "tf": TF_MIN, "coins": len(results), "failed": failed, "stocks": len(STOCKS), "crypto": len(COINS),
             "sources": sorted(sources), "best": best["name"],
         })
         batch.commit()
@@ -260,10 +330,13 @@ def main():
         alerts = sorted(alerts, key=lambda s: s["conf"], reverse=True)[:MAX_ALERTS_PER_RUN]
         for s in alerts:
             buy = s["dir"] == "UP"
-            title = f"{'BUY' if buy else 'SELL'} {s['name']}/USDT {'▲' if buy else '▼'} · Signal strength {s['conf']}/100"
+            pair = s["name"] if s.get("market") == "stock" else f"{s['name']}/USDT"
+            if s.get("market") == "stock" and not s.get("marketOpen"):
+                continue  # don't alert on stocks while the market is closed
+            title = f"{'BUY' if buy else 'SELL'} {pair} {'▲' if buy else '▼'} · Signal strength {s['conf']}/100"
             body = f"Entry {fmt(s['price'])} · Target {fmt(s['tp1'])} · Stop {fmt(s['stop'])}"
             db.collection("alerts").add({
-                "name": s["name"], "dir": s["dir"], "conf": s["conf"], "stars": s["stars"],
+                "name": s["name"], "market": s.get("market", "crypto"), "dir": s["dir"], "conf": s["conf"], "stars": s["stars"],
                 "price": s["price"], "tp1": s["tp1"], "stop": s["stop"],
                 "at": firestore.SERVER_TIMESTAMP, "atMs": now_ms, "title": title, "body": body})
             try:
